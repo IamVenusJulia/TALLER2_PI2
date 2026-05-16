@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.Python
+env/
+venv/
+.env
+.venv
+pip-log.txt
+pip-delete-this-check.txt
+
+# Pruebas y Cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editores y Sistema
+.vscode/
