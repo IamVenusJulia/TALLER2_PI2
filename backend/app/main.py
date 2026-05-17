@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
 import logging
+from app.auth import get_current_user, RoleChecker
 
 # Configuración de logs para ver la verificación en la terminal
 logging.basicConfig(level=logging.INFO)
@@ -36,3 +37,21 @@ def health_check(db: Session = Depends(get_db)):
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
         return {"status": "unhealthy", "database": "error", "details": str(e)}
+
+# Escenario 1 y 4: Endpoint protegido para Clientes e inyección de contexto
+@app.get("/api/cliente/historial")
+def get_cliente_historial(current_user: dict = Depends(get_current_user)):
+    return {
+        "message": "Historial de reservas obtenido con éxito",
+        "usuario_autenticado": current_user
+    }
+
+# Escenario 2: Endpoint exclusivo de Administrador protegido con RBAC
+require_admin = RoleChecker(["admin"])
+
+@app.get("/api/admin/reservas-semana")
+def get_admin_reservas(current_user: dict = Depends(require_admin)):
+    return {
+        "message": "Panel de administración - Reservas de la semana",
+        "admin_info": current_user
+    }
