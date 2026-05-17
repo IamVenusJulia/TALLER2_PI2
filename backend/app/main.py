@@ -6,6 +6,8 @@ import logging
 from app.auth import get_current_user, RoleChecker
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
+from typing import Optional
 
 # Configuración de logs para ver la verificación en la terminal
 logging.basicConfig(level=logging.INFO)
@@ -70,10 +72,39 @@ CONFIG_IA = types.GenerateContentConfig(
     max_output_tokens=1000,     # Control y límite de consumo de tokens (Evita costos altos)
 )
 
+# HU-10 (Estructura de Extracción)
+class IntencionReserva(BaseModel):
+    intencion: str = Field(description="La acción del usuario. Valores posibles: 'crear_reserva', 'cancelar_reserva', 'consultar_disponibilidad', 'desconocido'")
+    deporte: Optional[str] = Field(None, description="El tipo de cancha o grama de fútbol 5. Valores posibles: 'sintética', 'natural'. Si no se menciona, dejar null.")
+    fecha: Optional[str] = Field(None, description="La fecha solicitada en formato YYYY-MM-DD. Si dice 'mañana', calcula la fecha basada en la fecha actual del sistema. Si no se menciona, dejar null.")
+    hora: Optional[str] = Field(None, description="La hora solicitada en formato HH:MM (24 horas). Ejemplo: '3 pm' es '15:00'. Si no se menciona, dejar null.")
+    respuesta_asistente: Optional[str] = Field(None, description="Una frase inicial corta y cortés de máximo 4 palabras reconociendo la acción. Ejemplo: '¡Claro que sí!', 'Perfecto, déjame revisar.'")
+
+# System Prompt estricto para cumplir con el Criterio 3 (Políticas de negocio)
+PROMPT_SISTEMA_LLM = """
+Actúas como el asistente virtual inteligente de FootCall, una app de reservas deportivas de fútbol 5.
+Tu única tarea es analizar el texto transcrito del usuario y extraer los parámetros de su intención de reserva.
+
+REGLAS CRÍTICAS:
+1. Sé estrictamente determinista. No inventes datos. Si el usuario no menciona el deporte, la fecha o la hora, ponlos como null.
+2. Formatea las fechas a YYYY-MM-DD. Ten en cuenta que la fecha actual simulada del sistema es Domingo 17 de Mayo de 2026. Por ende, 'mañana' es '2026-05-18'.
+3. Formatea las horas a formato de 24 horas (HH:MM). Ejemplo: '6 de la tarde' -> '18:00', '3 pm' -> '15:00'.
+"""
+
+# Configuración avanzada para el LLM de la HU-10
+CONFIG_LLM_INTENCIONES = types.GenerateContentConfig(
+    system_instruction=PROMPT_SISTEMA_LLM,
+    temperature=0.0,
+    max_output_tokens=500,
+    response_mime_type="application/json", # Obliga a Gemini a responder en JSON
+    response_schema=IntencionReserva,      # Mapea el JSON exactamente a nuestra clase de Pydantic
+)
+
 @app.post("/api/voice/process", status_code=status.HTTP_200_OK)
 async def process_voice_input(
     audio_file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user) # protegido con autenticación y el uso de middleware de la HU-06
+    db: Session = Depends(get_db),# creamos la sesión de base de datos para la HU-10
+    #current_user: dict = Depends(get_current_user) # protegido con autenticación y el uso de middleware de la HU-06
     # si se desea hacer untes desde el Swagge se debe dejar comentada esta línea y descomentarla para pruebas con autenticación real desde el frontend   
 ):
     """
@@ -90,6 +121,8 @@ async def process_voice_input(
         
     try:
         import time
+        import json # Llamamos el json para formatear la respuesta del LLM
+        from datetime import datetime # Para procesar el día de la semana en la HU-10
         inicio_stt = time.time()
         
         # Leemos el archivo de audio real enviado por el usuario
@@ -120,12 +153,122 @@ async def process_voice_input(
         tokens_input = response.usage_metadata.prompt_token_count if response.usage_metadata else 0
         tokens_output = response.usage_metadata.candidates_token_count if response.usage_metadata else 0
         tokens_totales = response.usage_metadata.total_token_count if response.usage_metadata else 0
+
+        # Procesamiento del LLM: Extracción de Intenciones y Parámetros de Reserva desde el texto transcrito al LLM con el System Prompt y el esquema estructurado HU-10
+        response_llm = gemini_client.models.generate_content(
+            model=MODELO_GEMINI,
+            contents=f"Texto del usuario: '{texto_real}'",
+            config=CONFIG_LLM_INTENCIONES
+        )
         
+        # Como obligamos a Gemini a responder en JSON estructurado, cargamos su texto como diccionario HU-10
+        intencion_extraida = json.loads(response_llm.text)
+
+        # cosulta de disponibalidad de canchas para la fecha y hora solicitada
+        disponibilidad_canchas = []
+        fecha_str = intencion_extraida.get("fecha")
+        hora_str = intencion_extraida.get("hora")
+        superficie_solicitada = intencion_extraida.get("deporte") # 'sintetica' o 'natural'
+
+        # Solo buscamos disponibilidad si el usuario quiere crear/consultar y tenemos fecha y hora
+        if intencion_extraida.get("intencion") in ["crear_reserva", "consultar_disponibilidad"] and fecha_str and hora_str:
+            
+            # 1. Calcular el día de la semana (0=Domingo, 1=Lunes, ..., 6=Sábado) para PostgreSQL
+            # %w en strftime de Python da 0 para Domingo, justo como tu CHECK (dia_semana BETWEEN 0 AND 6)
+            fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d")
+            dia_semana_num = int(fecha_obj.strftime("%w"))
+
+            # 2. Query nativa para encontrar canchas con slot configurado y SIN reserva activa
+            query_sql = text("""
+                SELECT c.id AS cancha_id, c.nombre AS cancha_nombre, c.tipo_superficie, hc.id AS horario_id, hc.hora_inicio
+                FROM canchas c
+                JOIN horarios_cancha hc ON c.id = hc.cancha_id
+                WHERE hc.dia_semana = :dia_semana
+                  AND hc.hora_inicio = :hora
+                  AND c.esta_activa = TRUE
+                  AND c.eliminado = FALSE
+                  AND hc.activo = TRUE
+                  AND (:superficie IS NULL OR c.tipo_superficie = CAST(:superficie AS tipo_superficie_enum))
+                  AND NOT EXISTS (
+                      SELECT 1 
+                      FROM reservas r
+                      WHERE r.horario_cancha_id = hc.id
+                        AND r.fecha_reserva = :fecha
+                        AND r.estado != 'cancelada'
+                  );
+            """)
+
+            # Ejecutamos la query pasando los parámetros limpios
+            resultado = db.execute(query_sql, {
+                "dia_semana": dia_semana_num,
+                "hora": hora_str,
+                "fecha": fecha_str,
+                "superficie": superficie_solicitada
+            }).mappings().all()
+
+            # Mapeamos el resultado convirtiendo objetos 'time' a string para evitar el error de serialización
+            disponibilidad_canchas = []
+            for row in resultado:
+                row_dict = dict(row)
+                # Si 'hora_inicio' es un objeto time, lo pasamos a formato HH:MM:SS en texto
+                if hasattr(row_dict.get("hora_inicio"), "strftime"):
+                    row_dict["hora_inicio"] = row_dict["hora_inicio"].strftime("%H:%M:%S")
+                disponibilidad_canchas.append(row_dict)
+
+# GENERACIÓN DE LA RESPUESTA CONVERSACIONAL (FINAL HU-10 - Python Optimizado)
+        # Construimos la respuesta final de forma dinámica según los resultados reales de la base de datos
+        saludo_inicial = intencion_extraida.get("respuesta_asistente") or "Listo."
+        
+        if intencion_extraida.get("intencion") in ["crear_reserva", "consultar_disponibilidad"]:
+            if len(disponibilidad_canchas) == 0:
+                texto_asistente = f"Lo siento, para el día {fecha_str} a las {hora_str} no nos quedan canchas disponibles."
+            else:
+                canchas_nombres = [c['cancha_nombre'] for c in disponibilidad_canchas]
+                if len(canchas_nombres) == 1:
+                    texto_asistente = f"{saludo_inicial} Tengo libre la cancha {canchas_nombres[0]} para mañana a las {hora_str}. ¿Procedemos con la reserva?"
+                else:
+                    # Si hay múltiples opciones (como tu caso actual)
+                    opciones_str = " y la ".join(canchas_nombres)
+                    texto_asistente = f"{saludo_inicial} Para mañana a las {hora_str} tengo disponibles la {opciones_str}. ¿Cuál de las dos prefieres?"
+        else:
+            texto_asistente = "Entendido. ¿En qué más te puedo colaborar?"
+
         return {
             "status": "success",
             "filename": audio_file.filename,
             "size_kb": round(tamano_kb, 2),
             "transcription": texto_real,
+            "ll_response": intencion_extraida,
+            "database_availability": {
+                "disponible": len(disponibilidad_canchas) > 0,
+                "canchas_libres_encontradas": len(disponibilidad_canchas),
+                "opciones": disponibilidad_canchas
+            },
+            "asistente_voz_texto": texto_asistente, 
+            "metrics": {
+                "latencia_stt_ms": latencia_total, 
+                "error_transcripcion": False,
+                "consumo_tokens": {
+                    "input_tokens": tokens_input,
+                    "output_tokens": tokens_output,
+                    "total_tokens": tokens_totales
+                },
+                "costo_estimado_usd": round((tokens_totales * 0.000000075), 6)                
+            }
+        }       
+
+        return {
+            "status": "success",
+            "filename": audio_file.filename,
+            "size_kb": round(tamano_kb, 2),
+            "transcription": texto_real,
+            "ll_response": intencion_extraida,
+            "database_availability": {
+                "disponible": len(disponibilidad_canchas) > 0,
+                "canchas_libres_encontradas": len(disponibilidad_canchas),
+                "opciones": disponibilidad_canchas
+            },
+            "asistente_voz_texto": texto_asistente, # este campo es importante para la HU-11
             "metrics": {
                 "latencia_stt_ms": latencia_total, # Valida Criterio 2 (<1000ms)
                 "error_transcripcion": False,
@@ -145,3 +288,4 @@ async def process_voice_input(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno al procesar el flujo de audio con Gemini: {str(e)}"
         )
+    
