@@ -8,6 +8,9 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 from typing import Optional
+from io import BytesIO
+from fastapi.responses import StreamingResponse
+
 
 # Configuración de logs para ver la verificación en la terminal
 logging.basicConfig(level=logging.INFO)
@@ -62,8 +65,9 @@ def get_admin_reservas(current_user: dict = Depends(require_admin)):
 
 # HU-09: CORE DE INTELIGENCIA DE VOZ (STT - Speech to Text)
 
-# Inicializamos el cliente de Gemini (usa la versión 1.67.0)
+# Inicializamos el cliente oficial de Google GenAI SDK
 gemini_client = genai.Client()
+# Definimos el modelo multimodal de Gemini a utilizar para el asistente
 MODELO_GEMINI = "gemini-2.5-flash"
 
 # Definimos la configuración para cumplir con el Punto 11 del Taller (Métricas y Control)
@@ -161,14 +165,28 @@ async def process_voice_input(
             config=CONFIG_LLM_INTENCIONES
         )
         
-        # Como obligamos a Gemini a responder en JSON estructurado, cargamos su texto como diccionario HU-10
+        # Obligamos a Gemini a responder en JSON estructurado, cargamos su texto como diccionario HU-10
         intencion_extraida = json.loads(response_llm.text)
 
         # cosulta de disponibalidad de canchas para la fecha y hora solicitada
         disponibilidad_canchas = []
         fecha_str = intencion_extraida.get("fecha")
         hora_str = intencion_extraida.get("hora")
-        superficie_solicitada = intencion_extraida.get("deporte") # 'sintetica' o 'natural'
+
+        # error de tildes en la respuesta del LLM
+        superficie_raw = intencion_extraida.get("deporte")
+        superficie_solicitada = None
+
+        if superficie_raw:
+            superficie_solicitada = superficie_raw.lower().strip()
+            superficie_solicitada = (
+                superficie_solicitada
+                .replace("é", "e")
+                .replace("á", "a")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ú", "u")
+            )
 
         # Solo buscamos disponibilidad si el usuario quiere crear/consultar y tenemos fecha y hora
         if intencion_extraida.get("intencion") in ["crear_reserva", "consultar_disponibilidad"] and fecha_str and hora_str:
@@ -178,7 +196,7 @@ async def process_voice_input(
             fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d")
             dia_semana_num = int(fecha_obj.strftime("%w"))
 
-            # 2. Query nativa para encontrar canchas con slot configurado y SIN reserva activa
+            # 2. Query nativa para encontrar canchas con slot configurado y SIN reserva activa 
             query_sql = text("""
                 SELECT c.id AS cancha_id, c.nombre AS cancha_nombre, c.tipo_superficie, hc.id AS horario_id, hc.hora_inicio
                 FROM canchas c
@@ -215,7 +233,7 @@ async def process_voice_input(
                     row_dict["hora_inicio"] = row_dict["hora_inicio"].strftime("%H:%M:%S")
                 disponibilidad_canchas.append(row_dict)
 
-# GENERACIÓN DE LA RESPUESTA CONVERSACIONAL (FINAL HU-10 - Python Optimizado)
+        # GENERACIÓN DE LA RESPUESTA CONVERSACIONAL HU-10 
         # Construimos la respuesta final de forma dinámica según los resultados reales de la base de datos
         saludo_inicial = intencion_extraida.get("respuesta_asistente") or "Listo."
         
@@ -227,60 +245,57 @@ async def process_voice_input(
                 if len(canchas_nombres) == 1:
                     texto_asistente = f"{saludo_inicial} Tengo libre la cancha {canchas_nombres[0]} para mañana a las {hora_str}. ¿Procedemos con la reserva?"
                 else:
-                    # Si hay múltiples opciones (como tu caso actual)
+                    # Si hay múltiples opciones disponibles, las unimos con "y la" para que suene natural: "la cancha A y la cancha B"
                     opciones_str = " y la ".join(canchas_nombres)
                     texto_asistente = f"{saludo_inicial} Para mañana a las {hora_str} tengo disponibles la {opciones_str}. ¿Cuál de las dos prefieres?"
         else:
-            texto_asistente = "Entendido. ¿En qué más te puedo colaborar?"
+            texto_asistente = "Entendido. ¿En qué más te puedo colaborar?"      
 
-        return {
-            "status": "success",
-            "filename": audio_file.filename,
-            "size_kb": round(tamano_kb, 2),
-            "transcription": texto_real,
-            "ll_response": intencion_extraida,
-            "database_availability": {
-                "disponible": len(disponibilidad_canchas) > 0,
-                "canchas_libres_encontradas": len(disponibilidad_canchas),
-                "opciones": disponibilidad_canchas
-            },
-            "asistente_voz_texto": texto_asistente, 
-            "metrics": {
-                "latencia_stt_ms": latencia_total, 
-                "error_transcripcion": False,
-                "consumo_tokens": {
-                    "input_tokens": tokens_input,
-                    "output_tokens": tokens_output,
-                    "total_tokens": tokens_totales
-                },
-                "costo_estimado_usd": round((tokens_totales * 0.000000075), 6)                
-            }
-        }       
+        # HU-11: SÍNTESIS DE RESPUESTA A VOZ (TTS)      
+        from gtts import gTTS
+        from fastapi import Response
+        
+        # 1. Creamos el objeto gTTS (Mantiene eñes y tildes originales para que la voz suene natural, luego normalizamos el texto para las cabeceras HTTP)
+        tts = gTTS(text=texto_asistente, lang='es', tld='com', slow=False)
+        
+        # 2. Guardamos el audio en el buffer de memoria y extraemos sus bytes
+        audio_buffer = BytesIO()
+        tts.write_to_fp(audio_buffer)
+        audio_bytes = audio_buffer.getvalue()
+        audio_buffer.close()
 
-        return {
-            "status": "success",
-            "filename": audio_file.filename,
-            "size_kb": round(tamano_kb, 2),
-            "transcription": texto_real,
-            "ll_response": intencion_extraida,
-            "database_availability": {
-                "disponible": len(disponibilidad_canchas) > 0,
-                "canchas_libres_encontradas": len(disponibilidad_canchas),
-                "opciones": disponibilidad_canchas
-            },
-            "asistente_voz_texto": texto_asistente, # este campo es importante para la HU-11
-            "metrics": {
-                "latencia_stt_ms": latencia_total, # Valida Criterio 2 (<1000ms)
-                "error_transcripcion": False,
-                # variables en el JSON de respuesta
-                "consumo_tokens": {
-                    "input_tokens": tokens_input,
-                    "output_tokens": tokens_output,
-                    "total_tokens": tokens_totales
-                },
-                "costo_estimado_usd": round((tokens_totales * 0.000000075), 6) # Cálculo educativo de costo basado en precios de Gemini Flash                
-            }
+        # TEST LOCAL: Guardamos físicamente el archivo en el servidor para verificar que sí se genera el audio correctamente (eliminar esta parte cuando se este en producción)
+        with open("respuesta_asistente.mp3", "wb") as f:
+            f.write(audio_bytes)
+
+        # NORMALIZACIÓN: Limpiamos tildes y eñes para evitar los símbolos raros (Ã©, Ã±)
+        # con esto se busca asegura compatibilidad con servidores HTTP y Swagger
+        texto_real_limpio = (
+            texto_real.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+            .replace("ñ", "n").replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U").replace("Ñ", "N")
+            .replace("¿", "").replace("?", "")
+        )
+        texto_asistente_limpio = (
+            texto_asistente.replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+            .replace("ñ", "n").replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U").replace("Ñ", "N")
+            .replace("¿", "").replace("?", "")
+        )
+
+        # 3. Armamos las cabeceras con los strings
+        headers = {
+            "X-Transcription": texto_real_limpio,
+            "X-Intent": str(intencion_extraida.get("intencion", "desconocido")),
+            "X-Assistant-Text": texto_asistente_limpio,
+            "Access-Control-Expose-Headers": "X-Transcription, X-Intent, X-Assistant-Text",
+            "Content-Length": str(len(audio_bytes))
         }
+
+        # 4. Retornamos los bytes puros con la metadata limpia
+        return Response(
+            content=audio_bytes, 
+            media_type="audio/mpeg", 
+            headers=headers
+        )
         
     except Exception as e:
         logger.error(f"Error procesando el archivo de voz con Gemini: {str(e)}")
@@ -288,4 +303,3 @@ async def process_voice_input(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno al procesar el flujo de audio con Gemini: {str(e)}"
         )
-    
