@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  
+  /* Brand colors */
+  --footcall-green: #00b57a;
+  --footcall-green-hover: #009e6a;
+  --footcall-dark: #1e293b;
+  --footcall-light: #f1f5f9;
+
+  /* Semantic status colors */
+  --status-confirmada: #10b981;
+  --status-pendiente: #f59e0b;
+  --status-cancelada: #ef4444;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  
+  --color-footcall-green: var(--footcall-green);
+  --color-footcall-green-hover: var(--footcall-green-hover);
+  --color-footcall-dark: var(--footcall-dark);
+  --color-footcall-light: var(--footcall-light);
+  
+  --color-status-confirmada: var(--status-confirmada);
+  --color-status-pendiente: var(--status-pendiente);
+  --color-status-cancelada: var(--status-cancelada);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0f172a;
+    --foreground: #f8fafc;
+    --footcall-dark: #334155;
+    --footcall-light: #1e293b;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), sans-serif;
+}
