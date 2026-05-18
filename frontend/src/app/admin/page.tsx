@@ -1,6 +1,10 @@
+"use client";
+
+import { useState } from "react";
 import { mockReservasAdmin } from "@/lib/mocks";
 
 export default function AdminDashboard() {
+  const [vista, setVista] = useState<'diaria' | 'semanal'>('diaria');
   const data = mockReservasAdmin;
 
   return (
@@ -11,8 +15,18 @@ export default function AdminDashboard() {
           <p className="text-gray-500 font-medium">Bienvenido de nuevo, {data.admin.nombre}</p>
         </div>
         <div className="mt-4 sm:mt-0 flex bg-white rounded-xl shadow-sm border border-gray-200 p-1">
-          <button className="px-5 py-2.5 text-sm font-bold bg-footcall-light text-footcall-dark rounded-lg transition-colors">Vista Diaria</button>
-          <button className="px-5 py-2.5 text-sm font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors">Vista Semanal</button>
+          <button 
+            onClick={() => setVista('diaria')}
+            className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-colors ${vista === 'diaria' ? 'bg-footcall-light text-footcall-dark' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+          >
+            Vista Diaria
+          </button>
+          <button 
+            onClick={() => setVista('semanal')}
+            className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-colors ${vista === 'semanal' ? 'bg-footcall-light text-footcall-dark' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+          >
+            Vista Semanal
+          </button>
         </div>
       </header>
 
@@ -39,7 +53,7 @@ export default function AdminDashboard() {
       {/* Tabla de Reservas */}
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-          <h3 className="text-lg font-bold text-gray-900">Reservas Activas</h3>
+          <h3 className="text-lg font-bold text-gray-900">Reservas Activas ({vista === 'diaria' ? 'Hoy' : 'Esta Semana'})</h3>
           <button className="text-sm font-semibold text-footcall-green hover:text-footcall-green-hover transition-colors">Ver todas</button>
         </div>
         <div className="overflow-x-auto">
