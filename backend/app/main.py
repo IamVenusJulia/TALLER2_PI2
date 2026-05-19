@@ -16,10 +16,23 @@ from fastapi.responses import StreamingResponse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware  # 1. Las importaciones siempre van arriba del todo
+
+# 2. Creas la app UNA SOLA VEZ con todos tus metadatos (Título, descripción y versión)
 app = FastAPI(
     title="FootCall API",
     description="Backend orquestador para el asistente de voz de reservas deportivas",
     version="0.1.0"
+)
+
+# 3. Inyectas el middleware de CORS justo debajo para proteger la comunicación con front
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite que el Vercel se conecte sin bloqueos de seguridad
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos los métodos HTTP (GET, POST, etc.)
+    allow_headers=["*"],  # Permite todas las cabeceras (esencial para tus cabeceras X-Transcription, X-Intent, etc.)
 )
 
 @app.on_event("startup")
