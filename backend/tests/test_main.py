@@ -11,7 +11,7 @@ client = TestClient(app)
 # CONFIGURACIÓN DE FIXTURES Y MOCKS GLOBALES (Para no romper la base de datos)
 @pytest.fixture(autouse=True)
 def mock_dependencies():
-    """Bypassa la base de datos y la seguridad para probar solo la lógica del servidor"""
+    """Bypass a la base de datos y la seguridad para probar solo la lógica del servidor"""
     # Mock de la sesión de Base de Datos
     mock_session = MagicMock()
     # Simula que la consulta SQL de disponibilidad devuelve una cancha libre

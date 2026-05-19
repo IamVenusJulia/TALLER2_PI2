@@ -10,3 +10,4 @@ python-dotenv==1.0.1
 python-multipart==0.0.20
 google-genai==1.67.0
 gTTS==2.5.4
+PyJWT==2.10.1
