@@ -1,28 +1,28 @@
 import logging
 import time
 import json
+import unicodedata# Para la función de remover acentos de forma limpia
 from datetime import datetime
-
 from fastapi import FastAPI, Depends, Response, UploadFile, File, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
-
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-
 from pydantic import BaseModel, Field
 from typing import Optional
-
 from io import BytesIO
-
 from app.database import get_db
 from app.auth import get_current_user, RoleChecker
-
 from google import genai
 from google.genai import types
-
 from gtts import gTTS
+from enum import Enum
+
+# función para remover acentos y eñes de forma limpia 
+def remover_acentos(texto: str) -> str:
+    """Remueve tildes y eñes de forma limpia para cumplir con el estándar ASCII de HTTP"""
+    return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
 # 1. Configuración de logs
 logging.basicConfig(level=logging.INFO)
@@ -44,7 +44,6 @@ async def lifespan(app: FastAPI):
     # Código que se ejecuta al apagar la aplicación 
     logger.info("Aplicación cerrándose correctamente...")
 
-
 # 3. Crear la aplicación FastAPI con lifespan
 app = FastAPI(
     title="FootCall API",
@@ -61,7 +60,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.get("/")
 def read_root():
@@ -94,6 +92,13 @@ def get_admin_reservas(current_user: dict = Depends(require_admin)):
         "message": "Panel de administración - Reservas de la semana",
         "admin_info": current_user
     }
+# HU-18 - Modelo de validación para cambio de estado
+class EstadoReservaEnum(str, Enum):
+    confirmada = "confirmada"
+    pendiente = "pendiente"
+    cancelada = "cancelada"
+class ActualizarEstadoReserva(BaseModel):
+    estado: EstadoReservaEnum
 
 #  CONFIGURACIÓN GEMINI
 gemini_client = genai.Client()
@@ -104,13 +109,9 @@ MODELO_GEMINI = "gemini-2.5-flash"
 class InfoUsuario(BaseModel):
     nombre: str
     rol: str = "cliente"
-
-
 class SolicitudVoz(BaseModel):
     usuario: InfoUsuario
     texto_transcrito: str
-
-
 class IntencionReserva(BaseModel):
     intencion: str = Field(description="La acción del usuario. Valores posibles: 'crear_reserva', 'cancelar_reserva', 'consultar_disponibilidad', 'desconocido'")
     deporte: Optional[str] = Field(None, description="El tipo de cancha o grama de fútbol 5.")
@@ -118,52 +119,168 @@ class IntencionReserva(BaseModel):
     hora: Optional[str] = Field(None, description="La hora solicitada en formato HH:MM.")
     respuesta_asistente: Optional[str] = Field(None, description="Una frase inicial corta y cortés.")
 
+# HU-18 - Endpoint para actualizar estado de reserva (solo admin)
+@app.patch("/api/admin/reservas/{reserva_id}/estado", response_model=dict)
+def cambiar_estado_reserva(
+    reserva_id: int,
+    payload: ActualizarEstadoReserva,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin)# usa el validador de roles existente para asegurar que solo los admins puedan acceder a este endpoint
+):
+    """
+    HU-18: Endpoint para cambiar el estado de una reserva. El middleware 'require_admin' 
+    lanzará automáticamente un 403 Forbidden si el usuario no es administrador.
+    """
+    try:
+        # 1. Verificar si la reserva existe usando SQL Nativo en Supabase
+        query_buscar = text("SELECT id, estado FROM reservas WHERE id = :id")
+        reserva = db.execute(query_buscar, {"id": reserva_id}).fetchone()
 
-# System Prompt
-PROMPT_SISTEMA_LLM = """
-Actúas como el asistente virtual inteligente de FootCall, una app de reservas deportivas de fútbol 5.
-Tu única tarea es analizar el texto transcrito del usuario y extraer los parámetros de su intención de reserva.
+        if not reserva:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"La reserva con ID {reserva_id} no existe en el sistema."
+            )
 
-REGLAS CRÍTICAS:
-1. Sé estrictamente determinista. No inventes datos.
-2. Formatea las fechas a YYYY-MM-DD.
-3. Formatea las horas a formato de 24 horas (HH:MM).
-"""
+        # 2. Actualizar el estado y guardar los cambios transaccionales
+        query_actualizar = text("""
+            UPDATE reservas 
+            SET estado = :nuevo_estado, updated_at = NOW() 
+            WHERE id = :id
+            RETURNING id, usuario_id, horario_cancha_id, fecha_reserva, estado, total_pago;
+        """)
+        
+        resultado = db.execute(
+            query_actualizar, 
+            {"nuevo_estado": payload.estado.value, "id": reserva_id}
+        )
+        db.commit()
 
-# Configuración del LLM
-CONFIG_LLM_INTENCIONES = types.GenerateContentConfig(
-    system_instruction=PROMPT_SISTEMA_LLM,
-    temperature=0.0,
-    max_output_tokens=500,
-    response_mime_type="application/json",
-    response_schema=IntencionReserva,
-)
+        reserva_actualizada = resultado.fetchone()
 
+        return {
+            "message": "Estado de la reserva actualizado con éxito",
+            "reserva": {
+                "id": reserva_actualizada.id,
+                "usuario_id": reserva_actualizada.usuario_id,
+                "horario_cancha_id": reserva_actualizada.horario_cancha_id,
+                "fecha_reserva": str(reserva_actualizada.fecha_reserva),
+                "estado": payload.estado.value,  # Retorna el valor string de forma limpia
+                "total_pago": float(reserva_actualizada.total_pago)
+            }
+        }
+    except HTTPException as http_ex:
+        raise http_ex
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error actualizando el estado de la reserva {reserva_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno en la actualización: {str(e)}"
+        )
+    
 # ENDPOINT PRINCIPAL
 @app.post("/api/voice/process", status_code=status.HTTP_200_OK)
 async def process_voice_input(
     payload: SolicitudVoz,
     db: Session = Depends(get_db)
 ):
-    """
+   """
     Endpoint: Recibe la transcripción de texto, procesa la intención con Gemini y retorna audio.
+    Valida disponibilidad e inserta la reserva automáticamente si esta libre (HU-19)
     """
-    try:
+   try:
         inicio_procesamiento = time.time()
         
         texto_real = payload.texto_transcrito.strip()
         nombre_usuario = payload.usuario.nombre
+
+        # HU-23 (Filtro IA Responsable)
+        # Lista básica de palabras ofensivas comunes para mitigar ataques o lenguaje obsceno
+        PALABRAS_PROHIBIDAS = ["gonorrea", "triplehp", "malparido", "carechimba", "hijo de puta", "mierda"]
+        if any(palabra in texto_real.lower() for palabra in PALABRAS_PROHIBIDAS):
+            logger.warning(f"HU-23: Intento de uso de lenguaje inapropiado por: {nombre_usuario}")
+            
+            texto_bloqueo = f"Lo siento {nombre_usuario}, no puedo procesar tu solicitud utilizando ese lenguaje. Por favor intenta de nuevo con respeto."
+            tts_error = gTTS(text=texto_bloqueo, lang='es', tld='com', slow=False)
+            err_buffer = BytesIO()
+            tts_error.write_to_fp(err_buffer)
+            err_bytes = err_buffer.getvalue()
+            err_buffer.close()
+            
+            # Guardamos el intento de abuso en los logs de la DB
+            try:
+                db.execute(text("""
+                    INSERT INTO logs_conversaciones (session_id, texto_usuario, texto_respuesta, error_transcripcion, detalles_error, fecha_registro)
+                    VALUES ('session_voice_api', :texto, :resp, TRUE, 'Filtro de lenguaje ofensivo activado', NOW());
+                """), {"texto": texto_real, "resp": texto_bloqueo})
+                db.commit()
+            except Exception:
+                pass
+
+            return Response(
+                content=err_bytes,
+                media_type="audio/mpeg",
+                headers={
+                    "X-Transcription": "Bloqueado por seguridad",
+                    "X-Intent": "desconocido",
+                    "X-Assistant-Text": "Solicitud rechazada por lenguaje ofensivo",
+                    "Access-Control-Expose-Headers": "X-Transcription, X-Intent, X-Assistant-Text",
+                    "Content-Length": str(len(err_bytes))
+                }
+            )
         
-        logger.info(f"Procesando solicitud de: {nombre_usuario} ({payload.usuario.rol}) | Texto: '{texto_real}'")
+        logger.info(f"Procesando solicitud de: {nombre_usuario} ({payload.usuario.rol}) | Texto: '{texto_real}'")        
+
+        # contexto temporal dinnámico 
+        ahora = datetime.now()
+        fecha_hoy = ahora.strftime("%Y-%m-%d")  # Ej: '2026-05-24'
         
-        # Llamada al LLM
+        # Mapeo rápido para tener el nombre del día en español para Gemini
+        dias_es = {"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", "Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo"}
+        nombre_dia_hoy = dias_es.get(ahora.strftime("%A"), ahora.strftime("%A"))
+        
+        # Inyección dinámica de la fecha en las instrucciones del sistema
+        prompt_sistema_dinamico = f"""
+        Actúas como el asistente virtual inteligente de FootCall, una app de reservas deportivas de fútbol 5.
+        Tu única tarea es analizar el texto transcrito del usuario y extraer los parámetros de su intención de reserva.
+
+        CONTEXTO TEMPORAL CRÍTICO:
+        - La fecha de HOY real es estrictamente: {fecha_hoy} (Día de la semana: {nombre_dia_hoy}).
+        - CUALQUIER REFERENCIA RELATIVA COMO "ESTE LUNES" DEBE CALCULARSE EN EL AÑO EN CURSO ({ahora.year}).
+        - ESTÁ TOTALMENTE PROHIBIDO RESPONDER O CALCULAR FECHAS EN LOS AÑOS 2023,2024 O 2025. Si hoy es {fecha_hoy}, el lunes más cercano es en mayo de 2026.
+        - Cualquier referencia relativa del usuario como "este lunes", "mañana", "el próximo miércoles" o "las tres de la tarde" debe ser calculada matemáticamente basándote en que hoy es {fecha_hoy}. No uses años pasados como 2024 o 2025.
+
+        REGLAS CRÍTICAS:
+        1. Sé estrictamente determinista. No inventes datos.
+        2. Formatea las fechas calculadas a YYYY-MM-DD.
+        3. Formatea las horas a formato de 24 horas (HH:MM).
+        4. Para el campo 'deporte', extrae ÚNICAMENTE el tipo de superficie si el usuario la menciona ('sintética' o 'natural'). Si dice 'fútbol 5' o no la especifica, déjalo como null.
+        """
+        # Llamada al LLM enviándole la configuración con el prompt dinámico montado en caliente
         response_llm = gemini_client.models.generate_content(
             model=MODELO_GEMINI,
             contents=f"Texto del usuario: '{texto_real}'",
-            config=CONFIG_LLM_INTENCIONES
+            # AQUÍ PASAMOS EL PROMPT DINÁMICO QUE ACABAMOS DE CONSTRUIR
+            config=types.GenerateContentConfig(
+                system_instruction=prompt_sistema_dinamico,
+                temperature=0.0,
+                max_output_tokens=500,
+                response_mime_type="application/json",
+                response_schema=IntencionReserva,
+            )
         )
         
         intencion_extraida = json.loads(response_llm.text)
+
+        # EXTRAER METADATA DE TOKENS - Métricas y Evaluación del Sistema (HU-11 / RÚBRICA)
+        tokens_input = 0
+        tokens_output = 0
+
+        if response_llm.usage_metadata:
+            tokens_input = response_llm.usage_metadata.prompt_token_count
+            tokens_output = response_llm.usage_metadata.candidates_token_count
+            logger.info(f" Consumo Gemini - Input Tokens: {tokens_input} | Output Tokens: {tokens_output}")
 
         # Consulta de disponibilidad
         disponibilidad_canchas = []
@@ -178,13 +295,15 @@ async def process_voice_input(
                 superficie_raw.lower().strip()
                 .replace("é", "e").replace("á", "a").replace("í", "i").replace("ó", "o").replace("ú", "u")
             )
-
+        
+        # validación de parametros mínimos antes de proceder con la consulta de disponibilidad
         if intencion_extraida.get("intencion") in ["crear_reserva", "consultar_disponibilidad"] and fecha_str and hora_str:
             fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d")
             dia_semana_num = int(fecha_obj.strftime("%w"))
 
+            # # CORRECCIÓN: Se cambió 'c.precio_hora' por 'c.precio_por_hora' para que coincida exactamente con tu tabla 'canchas'
             query_sql = text("""
-                SELECT c.id AS cancha_id, c.nombre AS cancha_nombre, c.tipo_superficie, 
+                SELECT c.id AS cancha_id, c.nombre AS cancha_nombre, c.tipo_superficie, c.precio_por_hora,
                        hc.id AS horario_id, hc.hora_inicio
                 FROM canchas c
                 JOIN horarios_cancha hc ON c.id = hc.cancha_id
@@ -223,37 +342,100 @@ async def process_voice_input(
             if len(disponibilidad_canchas) == 0:
                 texto_asistente = f"Lo siento {nombre_usuario}, para el dia {fecha_str} a las {hora_str} no nos quedan canchas disponibles."
             else:
-                canchas_nombres = [c['cancha_nombre'] for c in disponibilidad_canchas]
-                if len(canchas_nombres) == 1:
-                    texto_asistente = f"{saludo_inicial} Tengo libre la cancha {canchas_nombres[0]} para esa fecha a las {hora_str}. ¿Procedemos con la reserva?"
+                canchas_nombres = [c['cancha_nombre'] for c in disponibilidad_canchas]                
+                
+                # HU-19: Si la intención extraída del LLM es guardar una reserva y encontramos disponibilidad, procedemos con el INSERT
+                if intencion_extraida.get("intencion") == "crear_reserva":
+                    # # Tomamos la primera cancha disponible de la lista devuelta por la consulta
+                    cancha_elegida = disponibilidad_canchas[0]
+                    
+                    # Consultamos si existe el usuario por nombre en tu tabla 'usuarios', si no, asignamos ID 1 por defecto para desarrollo
+                    query_user = text("SELECT id FROM usuarios WHERE nombre ILIKE :nombre LIMIT 1")
+                    user_res = db.execute(query_user, {"nombre": nombre_usuario}).fetchone()
+                    usuario_id = user_res.id if user_res else 1
+                    
+                    try:
+                        # Ejecutamos el INSERT transaccional usando los datos mapeados y 'precio_por_hora' como total_pago
+                        query_insert_reserva = text("""
+                            INSERT INTO reservas (usuario_id, horario_cancha_id, fecha_reserva, estado, total_pago, metodo_pago, fecha_creacion, updated_at)
+                            VALUES (:usuario_id, :horario_cancha_id, :fecha_reserva, 'pendiente', :total_pago, 'efectivo', NOW(), NOW());
+                        """)
+                        
+                        db.execute(query_insert_reserva, {
+                            "usuario_id": usuario_id,
+                            "horario_cancha_id": cancha_elegida["horario_id"],
+                            "fecha_reserva": datetime.strptime(fecha_str, "%Y-%m-%d").date(),
+                            "total_pago": float(cancha_elegida["precio_por_hora"])
+                        })
+                        db.commit() # Guardamos la reserva en Supabase de manera persistente
+                        
+                        # Modificamos el texto para informarle al usuario que su reserva quedó registrada exitosamente
+                        texto_asistente = f"¡Excelente {nombre_usuario}! He registrado tu reserva para la cancha {cancha_elegida['cancha_nombre']} el dia {fecha_str} a las {hora_str} en estado pendiente."
+                        logger.info(f"HU-19: Reserva guardada en DB exitosamente para el usuario ID {usuario_id}")
+                        
+                    except Exception as db_err:
+                        db.rollback() # Revertimos cambios si falla la escritura
+                        logger.error(f"Error en insercion HU-19: {str(db_err)}")
+                        texto_asistente = f"Lo siento {nombre_usuario}, tuvimos un problema interno al guardar tu reserva."                
+                
+                #  HU-19: Si la intención era solo una consulta, solo responder con la disponibilidad encontrada
                 else:
-                    opciones_str = " y la ".join(canchas_nombres)
-                    texto_asistente = f"{saludo_inicial} Para esa fecha a las {hora_str} tengo disponibles la {opciones_str}. ¿Cual prefieres?"
+                    if len(canchas_nombres) == 1:
+                        texto_asistente = f"{saludo_inicial} Tengo libre la cancha {canchas_nombres[0]} para esa fecha a las {hora_str}. ¿Procedemos con la reserva?"
+                    else:
+                        opciones_str = " y la ".join(canchas_nombres)
+                        texto_asistente = f"{saludo_inicial} Para esa fecha a las {hora_str} tengo disponibles la {opciones_str}. ¿Cual prefieres?"
         else:
             texto_asistente = f"Entendido {nombre_usuario}. ¿En que mas te puedo colaborar?"      
 
-        # Síntesis de voz (TTS)
+        # Síntesis de testo a voz (TTS)
         tts = gTTS(text=texto_asistente, lang='es', tld='com', slow=False)
         audio_buffer = BytesIO()
         tts.write_to_fp(audio_buffer)
         audio_bytes = audio_buffer.getvalue()
         audio_buffer.close()
 
-        # Limpieza para cabeceras
-        texto_real_limpio = (
-            texto_real.replace("á", "a").replace("é", "e").replace("í", "i")
-            .replace("ó", "o").replace("ú", "u").replace("ñ", "n")
-            .replace("¿", "").replace("?", "")
-        )
-        texto_asistente_limpio = (
-            texto_asistente.replace("á", "a").replace("é", "e").replace("í", "i")
-            .replace("ó", "o").replace("ú", "u").replace("ñ", "n")
-            .replace("¿", "").replace("?", "")
-        )
+        # Limpiar acentos y caracteres especiales de los textos para los headers HTTP si coordino con front puedo mejorar esto usando urllib.parse.quote
+        texto_real_limpio = remover_acentos(texto_real)
+        texto_asistente_limpio = remover_acentos(texto_asistente)
 
         fin_procesamiento = time.time()
         latencia_total = int((fin_procesamiento - inicio_procesamiento) * 1000)
         logger.info(f"Procesamiento completado con éxito en {latencia_total}ms")
+
+        # HU-20 (Persistencia de Logs en Supabase)
+        try:
+            # Intentamos asociar el log a un usuario real si existe en la base de datos
+            query_log_user = text("SELECT id FROM usuarios WHERE nombre ILIKE :nombre LIMIT 1")
+            log_user_res = db.execute(query_log_user, {"nombre": nombre_usuario}).fetchone()
+            log_usuario_id = log_user_res.id if log_user_res else None
+            
+            # Insertamos la telemetría exacta requerida por la HU-20 en tu tabla 'logs_conversaciones'
+            query_insert_log = text("""
+                INSERT INTO logs_conversaciones (
+                    usuario_id, session_id, texto_usuario, texto_respuesta, 
+                    latencia_total_ms, error_transcripcion, tokens_input, tokens_output, fecha_registro
+                ) VALUES (
+                    :usuario_id, :session_id, :texto_usuario, :texto_respuesta, 
+                    :latencia_total, FALSE, :tokens_input, :tokens_output, NOW()
+                );
+            """)
+            
+            db.execute(query_insert_log,{
+                "usuario_id": log_usuario_id,
+                "session_id": "session_voice_api",
+                "texto_usuario": texto_real,
+                "texto_respuesta": texto_asistente,
+                "latencia_total": latencia_total,
+                "tokens_input": tokens_input,
+                "tokens_output": tokens_output
+            })
+            db.commit()
+            logger.info("HU-20: Telemetría e historial de conversación guardados con éxito en Supabase.")
+        except Exception as log_err:
+            db.rollback()
+            # No frenamos la respuesta del usuario si el log falla, solo lo registramos en consola
+            logger.error(f"Error guardando telemetría HU-20: {str(log_err)}")
 
         headers = {
             "X-Transcription": texto_real_limpio,
@@ -268,8 +450,22 @@ async def process_voice_input(
             media_type="audio/mpeg", 
             headers=headers
         )
+   
+   except Exception as e:        
+        try:
+            query_insert_err_log = text("""
+                INSERT INTO logs_conversaciones (
+                    session_id, texto_usuario, error_transcripcion, detalles_error, fecha_registro
+                ) VALUES ('session_voice_api', :texto_usuario, TRUE, :detalles_error, NOW());
+            """)
+            db.execute(query_insert_err_log, {
+                "texto_usuario": payload.texto_transcrito if 'payload' in locals() else "Desconocido",
+                "detalles_error": str(e)
+            })
+            db.commit()
+        except Exception as inner_err:
+            logger.error(f"No se pudo guardar el log de error en la DB: {str(inner_err)}")
         
-    except Exception as e:
         logger.error(f"Error procesando la solicitud de voz: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -143,3 +143,21 @@ def test_process_voice_input_success(mock_gemini):
     assert "X-Transcription" in response.headers
     assert "X-Intent" in response.headers
     assert response.headers["X-Intent"] == "crear_reserva"
+
+# 4. PRUEBA DE IA RESPONSABLE (HU-23)
+def test_process_voice_input_offensive_language():
+    """Valida que el filtro de la HU-23 intercepte insultos y bloquee la petición sin ir al LLM"""
+    payload_ofensivo = {
+        "usuario": {
+            "nombre": "Carlos Andres",
+            "rol": "cliente"
+        },
+        "texto_transcrito": "Hola carechimba, jueputa necesito reservar una cancha"
+    }
+    
+    response = client.post("/api/voice/process", json=payload_ofensivo)
+    
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/mpeg"
+    assert response.headers["X-Transcription"] == "Bloqueado por seguridad"
+    assert response.headers["X-Intent"] == "desconocido"
