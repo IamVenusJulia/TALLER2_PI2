@@ -19,6 +19,8 @@ jest.mock('@/lib/supabase', () => ({
   supabase: {
     auth: {
       signInWithPassword: jest.fn(),
+      signInWithOAuth: jest.fn(),
+      signUp: jest.fn(),
     },
   },
 }))
@@ -127,6 +129,65 @@ describe('LoginPage Component', () => {
     
     await waitFor(() => {
       expect(screen.getByText('Credenciales inválidas')).toBeInTheDocument()
+    })
+  })
+
+  test('debe cambiar a modo registro, registrarse exitosamente y mostrar mensaje de éxito', async () => {
+    (supabase.auth.signUp as jest.Mock).mockResolvedValue({
+      data: { session: null },
+      error: null,
+    })
+
+    render(<LoginPage />)
+    
+    // Cambiar a modo registro
+    const registerToggle = screen.getByRole('button', { name: 'Regístrate aquí' })
+    fireEvent.click(registerToggle)
+    
+    // Verificar que cambie el título
+    expect(screen.getByText('Crea tu cuenta')).toBeInTheDocument()
+    
+    const emailInput = screen.getByLabelText('Correo electrónico')
+    const passwordInput = screen.getByLabelText('Contraseña')
+    const submitButton = screen.getByRole('button', { name: 'Registrarse' })
+    
+    fireEvent.change(emailInput, { target: { value: 'nuevo@example.com' } })
+    fireEvent.change(passwordInput, { target: { value: 'nuevoPass123' } })
+    fireEvent.click(submitButton)
+    
+    await waitFor(() => {
+      expect(supabase.auth.signUp).toHaveBeenCalledWith({
+        email: 'nuevo@example.com',
+        password: 'nuevoPass123',
+        options: {
+          data: {
+            full_name: 'nuevo',
+            rol: 'cliente',
+          },
+        },
+      })
+      expect(screen.getByText('¡Registro exitoso! Revisa tu correo de confirmación para activar tu cuenta.')).toBeInTheDocument()
+    })
+  })
+
+  test('debe llamar a signInWithOAuth con google al hacer click en el botón de Google', async () => {
+    (supabase.auth.signInWithOAuth as jest.Mock).mockResolvedValue({
+      data: {},
+      error: null,
+    })
+
+    render(<LoginPage />)
+    
+    const googleButton = screen.getByRole('button', { name: /Iniciar sesión con Google/i })
+    fireEvent.click(googleButton)
+    
+    await waitFor(() => {
+      expect(supabase.auth.signInWithOAuth).toHaveBeenCalledWith({
+        provider: 'google',
+        options: {
+          redirectTo: expect.stringContaining('/cliente'),
+        },
+      })
     })
   })
 })
