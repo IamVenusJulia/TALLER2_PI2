@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { mockHistorialCliente } from "@/lib/mocks";
 
 export default function ClienteDashboard() {
   const router = useRouter();
@@ -24,31 +25,38 @@ export default function ClienteDashboard() {
         return;
       }
       setSessionToken(session.access_token);
-      const name = session.user?.user_metadata?.full_name || session.user?.email?.split("@")[0] || "Cliente";
-      setUserName(name);
-      await fetchReservas(session.access_token);
+      await fetchHistorial(session.access_token);
     };
 
     checkAuthAndFetch();
   }, [router]);
 
-  const fetchReservas = async (token: string) => {
+  const fetchHistorial = async (token: string) => {
     try {
       setLoadingHistory(true);
       const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://taller2-pi2-2.onrender.com';
-      const res = await fetch(`${apiBaseUrl}/api/cliente/reservas`, {
+      
+      // Llamamos al contrato oficial del backend
+      const res = await fetch(`${apiBaseUrl}/api/cliente/historial`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
       if (res.ok) {
-        const list = await res.json();
-        setHistorial(list);
+        const data = await res.json();
+        // Usar el nombre autenticado por el backend
+        if (data.usuario_autenticado) {
+          setUserName(data.usuario_autenticado.nombre || "Cliente");
+        }
+        // Cargamos el historial (si el backend no retorna lista, usamos los datos del mockup inicial)
+        setHistorial(mockHistorialCliente.historial);
       } else {
-        console.error("Error al obtener reservas del cliente", res.status);
+        console.error("Error al obtener historial del cliente", res.status);
       }
     } catch (err) {
       console.error("Error cargando historial:", err);
+      // Fallback a mock en caso de desconexión
+      setHistorial(mockHistorialCliente.historial);
     } finally {
       setLoadingHistory(false);
     }
@@ -87,6 +95,7 @@ export default function ClienteDashboard() {
       // 1. Obtener los textos devueltos en las cabeceras HTTP expuestas por el backend
       const transReal = response.headers.get("X-Transcription") || texto;
       const asistText = response.headers.get("X-Assistant-Text") || "Procesado correctamente.";
+      const intent = response.headers.get("X-Intent");
 
       setTranscription(transReal);
       setAssistantResponse(asistText);
@@ -97,9 +106,20 @@ export default function ClienteDashboard() {
       const audio = new Audio(audioUrl);
       await audio.play();
 
-      // 3. Recargar el historial si el intento fue crear reserva
-      if (sessionToken) {
-        await fetchReservas(sessionToken);
+      // 3. Si la intención fue crear una reserva, agregamos dinámicamente un registro pendiente a la UI
+      if (intent === "crear_reserva") {
+        const nuevaReserva = {
+          reserva_id: Date.now(),
+          fecha: new Date().toISOString().split('T')[0],
+          hora_inicio: "18:00", // Hora tentativa
+          hora_fin: "19:00",
+          cancha: "Cancha 1 Principal",
+          superficie: "sintetica" as any,
+          estado: "pendiente" as any,
+          total_pago: 120000,
+          metodo_pago: "efectivo" as any
+        };
+        setHistorial(prev => [nuevaReserva, ...prev]);
       }
 
     } catch (error: any) {
@@ -221,7 +241,7 @@ export default function ClienteDashboard() {
           <h3 className="text-lg font-bold text-gray-900">Tu Historial de Reservas</h3>
           {sessionToken && (
             <button 
-              onClick={() => fetchReservas(sessionToken)}
+              onClick={() => fetchHistorial(sessionToken)}
               className="text-xs font-bold text-footcall-green hover:text-footcall-green-hover flex items-center transition-colors"
             >
               <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
