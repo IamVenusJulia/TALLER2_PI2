@@ -155,7 +155,7 @@ export default function ClienteDashboard() {
     };
 
     rec.onerror = (event: any) => {
-      console.error(event.error);
+      console.warn("Speech recognition error:", event.error);
       setIsListening(false);
       setTranscription(`Error al capturar voz: ${event.error}`);
     };
