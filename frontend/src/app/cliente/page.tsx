@@ -51,10 +51,10 @@ export default function ClienteDashboard() {
         // Cargamos el historial (si el backend no retorna lista, usamos los datos del mockup inicial)
         setHistorial(mockHistorialCliente.historial);
       } else {
-        console.error("Error al obtener historial del cliente", res.status);
+        console.warn("Error al obtener historial del cliente", res.status);
       }
     } catch (err) {
-      console.error("Error cargando historial:", err);
+      console.warn("Error cargando historial:", err);
       // Fallback a mock en caso de desconexión
       setHistorial(mockHistorialCliente.historial);
     } finally {

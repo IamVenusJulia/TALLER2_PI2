@@ -87,10 +87,10 @@ export default function AdminDashboard() {
         setCanchas(mockReservasAdmin.canchas_disponibles);
         setReservas(mockReservasAdmin.reservas_activas);
       } else {
-        console.error("Error al cargar reservas de administración", res.status);
+        console.warn("Error al cargar reservas de administración", res.status);
       }
     } catch (err) {
-      console.error("Error cargando panel admin:", err);
+      console.warn("Error cargando panel admin:", err);
       // Fallback a mocks en caso de desconexión
       setCanchas(mockReservasAdmin.canchas_disponibles);
       setReservas(mockReservasAdmin.reservas_activas);
