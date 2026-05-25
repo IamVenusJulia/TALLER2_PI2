@@ -16,3 +16,6 @@ htmlcov/
 
 # Editores y Sistema
 .vscode/
+# Archivos temporales de medios (QA/Audio)
+*.mp3
+*.wav
