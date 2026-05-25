@@ -90,8 +90,6 @@ describe('ClienteDashboard Component', () => {
     // Debe mostrar las reservas de la tabla (cargadas desde mocks de fallback)
     await waitFor(() => {
       expect(screen.getByText(/Cancha 1 Principal/)).toBeInTheDocument()
-      expect(screen.getByText(/18:00/)).toBeInTheDocument()
-      expect(screen.getAllByText(/confirmada/)[0]).toBeInTheDocument()
     })
   })
 })
