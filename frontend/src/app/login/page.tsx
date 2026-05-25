@@ -117,6 +117,7 @@ export default function LoginPage() {
               alt="FootCall Logo" 
               width={180} 
               height={180} 
+              style={{ height: 'auto' }}
               className="object-contain drop-shadow-md"
               priority
             />
