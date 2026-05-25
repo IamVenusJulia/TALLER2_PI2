@@ -47,8 +47,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             user_data = {
                 "id": result.id,
                 "nombre": f"{result.nombre} {result.apellido}",
-                "rol": str(result.rol), # Retorna 'admin' o 'cliente'
-                "email": email
+                "rol": str(result.rol) # Retorna 'admin' o 'cliente'
             }
             return user_data
     except Exception:
@@ -60,8 +59,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     user_data = {
         "id": supabase_uid,
         "nombre": user_metadata.get("full_name", email.split("@")[0] if email else "Usuario Anonimo"),
-        "rol": rol_jwt,
-        "email": email
+        "rol": rol_jwt
     }
     
     return user_data
