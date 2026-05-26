@@ -91,10 +91,24 @@ export default function ClienteDashboard() {
         throw new Error(`Error en el servidor: ${response.statusText}`);
       }
 
-      // 1. Obtener los textos devueltos en las cabeceras HTTP expuestas por el backend
-      const transReal = response.headers.get("X-Transcription") || texto;
-      const asistText = response.headers.get("X-Assistant-Text") || "Procesado correctamente.";
+      // 1. Obtener los textos devueltos en las cabeceras HTTP expuestas por el backend decodificándolos de manera segura
+      const transRealRaw = response.headers.get("X-Transcription") || texto;
+      const asistTextRaw = response.headers.get("X-Assistant-Text") || "Procesado correctamente.";
       const intent = response.headers.get("X-Intent");
+
+      // Decodificación segura de caracteres especiales (tildes, eñes, etc.)
+      let transReal = transRealRaw;
+      let asistText = asistTextRaw;
+      try {
+        transReal = decodeURIComponent(transRealRaw);
+      } catch (e) {
+        console.warn("No se pudo decodificar X-Transcription:", e);
+      }
+      try {
+        asistText = decodeURIComponent(asistTextRaw);
+      } catch (e) {
+        console.warn("No se pudo decodificar X-Assistant-Text:", e);
+      }
 
       setTranscription(transReal);
       setAssistantResponse(asistText);
