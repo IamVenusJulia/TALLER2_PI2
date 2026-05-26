@@ -208,6 +208,36 @@ def get_admin_reservas(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error cargando reservas: {str(e)}"
         )
+
+@app.get("/api/admin/clientes")
+def get_admin_clientes(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin)
+):
+    try:
+        query = text("""
+            SELECT u.id, u.nombre, u.apellido, u.email, u.telefono, u.fecha_creacion,
+                   COUNT(r.id) AS total_reservas
+            FROM usuarios u
+            LEFT JOIN reservas r ON u.id = r.usuario_id
+            WHERE u.rol = 'cliente' AND u.eliminado = FALSE
+            GROUP BY u.id
+            ORDER BY u.nombre ASC, u.apellido ASC;
+        """)
+        result = db.execute(query).mappings().all()
+        clientes_lista = []
+        for row in result:
+            row_dict = dict(row)
+            if row_dict.get("fecha_creacion"):
+                row_dict["fecha_creacion"] = str(row_dict["fecha_creacion"])[:10]
+            clientes_lista.append(row_dict)
+        return {"clientes": clientes_lista}
+    except Exception as e:
+        logger.error(f"Error cargando lista de clientes: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error cargando clientes: {str(e)}"
+        )
 # HU-18 - Modelo de validación para cambio de estado
 class EstadoReservaEnum(str, Enum):
     confirmada = "confirmada"

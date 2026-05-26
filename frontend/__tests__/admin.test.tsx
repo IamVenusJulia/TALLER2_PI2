@@ -11,6 +11,11 @@ jest.mock('next/navigation', () => ({
       prefetch: () => null,
     }
   },
+  useSearchParams() {
+    return {
+      get: (key: string) => null,
+    }
+  }
 }))
 
 // Mock Supabase

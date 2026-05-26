@@ -1,10 +1,26 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
-export default function AdminDashboard() {
+export default function AdminDashboardPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-12 text-center flex flex-col items-center justify-center min-h-screen">
+        <svg className="animate-spin h-8 w-8 text-footcall-green mb-3" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p className="text-gray-500 font-medium">Cargando administrador...</p>
+      </div>
+    }>
+      <AdminDashboard />
+    </Suspense>
+  );
+}
+
+function AdminDashboard() {
   const router = useRouter();
   const [vista, setVista] = useState<'diaria' | 'semanal'>('diaria');
   const [canchas, setCanchas] = useState<any[]>([]);
@@ -13,6 +29,12 @@ export default function AdminDashboard() {
   const [loadingAction, setLoadingAction] = useState(false);
   const [adminName, setAdminName] = useState("Administrador");
   const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [clientes, setClientes] = useState<any[]>([]);
+  const [loadingClientes, setLoadingClientes] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const searchParams = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'calendario';
 
   // Alertas / Notificaciones
   const [alerta, setAlerta] = useState<any | null>(null);
@@ -41,6 +63,32 @@ export default function AdminDashboard() {
 
     checkAuthAndFetch();
   }, [router]);
+
+  useEffect(() => {
+    if (sessionToken && activeTab === 'clientes') {
+      cargarClientes(sessionToken);
+    }
+  }, [sessionToken, activeTab]);
+
+  const cargarClientes = async (token: string) => {
+    try {
+      setLoadingClientes(true);
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://taller2-pi2-2.onrender.com';
+      const res = await fetch(`${apiBaseUrl}/api/admin/clientes`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setClientes(data.clientes || []);
+      }
+    } catch (err) {
+      console.error("Error cargando clientes:", err);
+    } finally {
+      setLoadingClientes(false);
+    }
+  };
 
   // Sincronización de reservas en tiempo real mediante el botón de Recargar vinculada al backend
 
@@ -239,155 +287,262 @@ export default function AdminDashboard() {
       {/* Header Panel */}
       <header className="flex flex-col sm:flex-row sm:items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-extrabold text-footcall-dark mb-1 tracking-tight">Calendario de Reservas</h1>
+          <h1 className="text-3xl font-extrabold text-footcall-dark mb-1 tracking-tight">
+            {activeTab === 'clientes' ? 'Listado de Clientes' : 'Calendario de Reservas'}
+          </h1>
           <p className="text-gray-500 font-medium">Bienvenido de nuevo, {adminName}</p>
         </div>
-        <div className="mt-4 sm:mt-0 flex bg-white rounded-xl shadow-sm border border-gray-200 p-1">
-          <button 
-            onClick={() => setVista('diaria')}
-            className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-colors ${vista === 'diaria' ? 'bg-footcall-light text-footcall-dark' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
-          >
-            Vista Diaria
-          </button>
-          <button 
-            onClick={() => setVista('semanal')}
-            className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-colors ${vista === 'semanal' ? 'bg-footcall-light text-footcall-dark' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
-          >
-            Vista Semanal
-          </button>
-        </div>
+        {activeTab !== 'clientes' && (
+          <div className="mt-4 sm:mt-0 flex bg-white rounded-xl shadow-sm border border-gray-200 p-1">
+            <button 
+              onClick={() => setVista('diaria')}
+              className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-colors ${vista === 'diaria' ? 'bg-footcall-light text-footcall-dark' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+            >
+              Vista Diaria
+            </button>
+            <button 
+              onClick={() => setVista('semanal')}
+              className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-colors ${vista === 'semanal' ? 'bg-footcall-light text-footcall-dark' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'}`}
+            >
+              Vista Semanal
+            </button>
+          </div>
+        )}
       </header>
 
-      {/* Tarjetas de Canchas */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-10">
-        {loading ? (
-          /* Esqueleto de Carga */
-          Array.from({ length: 3 }).map((_, idx) => (
-            <div key={idx} className="bg-white rounded-2xl border border-gray-100 p-6 flex items-center justify-between animate-pulse">
-              <div className="space-y-2 w-1/2">
-                <div className="h-6 bg-gray-200 rounded w-full"></div>
-                <div className="h-4 bg-gray-100 rounded w-1/2"></div>
-              </div>
-              <div className="h-8 bg-gray-200 rounded w-1/4"></div>
+      {activeTab === 'clientes' ? (
+        /* VISTA DE CLIENTES */
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gray-50/50">
+            <div className="relative flex-1 max-w-md">
+              <input
+                type="text"
+                placeholder="Buscar clientes por nombre o correo..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-footcall-green focus:border-transparent transition-all bg-white text-gray-900"
+              />
+              <svg className="w-5 h-5 text-gray-400 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
             </div>
-          ))
-        ) : canchas.length === 0 ? (
-          <div className="col-span-full bg-white rounded-2xl border border-gray-100 p-6 text-center text-gray-500 font-medium">
-            No hay canchas registradas en el sistema.
+            {sessionToken && (
+              <button 
+                onClick={() => cargarClientes(sessionToken)}
+                className="text-sm font-semibold text-footcall-green hover:text-footcall-green-hover transition-colors flex items-center self-end sm:self-auto"
+              >
+                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.2" /></svg>
+                Actualizar Lista
+              </button>
+            )}
           </div>
-        ) : (
-          canchas.map((cancha) => (
-            <div key={cancha.cancha_id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between hover:shadow-md transition-shadow">
-              <div className="mb-4 sm:mb-0">
-                <h3 className="text-xl font-bold text-gray-900 mb-1">{cancha.nombre}</h3>
-                <div className="flex items-center">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-800 capitalize">
-                    {cancha.tipo_superficie}
-                  </span>
-                </div>
-              </div>
-              <div className="text-left sm:text-right">
-                <span className="block text-2xl font-black text-footcall-green">${cancha.precio_por_hora.toLocaleString()}</span>
-                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">por hora</span>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
 
-      {/* Tabla de Reservas */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-          <h3 className="text-lg font-bold text-gray-900">Reservas Activas ({vista === 'diaria' ? 'Hoy' : 'Esta Semana'})</h3>
-          {sessionToken && (
-            <button 
-              onClick={() => cargarDatos(sessionToken)}
-              className="text-sm font-semibold text-footcall-green hover:text-footcall-green-hover transition-colors flex items-center"
-            >
-              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.2" /></svg>
-              Recargar
-            </button>
+          {loadingClientes ? (
+            <div className="p-12 text-center flex flex-col items-center justify-center">
+              <svg className="animate-spin h-8 w-8 text-footcall-green mb-3" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <p className="text-gray-500 font-medium">Cargando clientes registrados...</p>
+            </div>
+          ) : (
+            (() => {
+              const clientesFiltrados = clientes.filter(c => {
+                const term = searchQuery.toLowerCase();
+                const fullName = `${c.nombre} ${c.apellido}`.toLowerCase();
+                return fullName.includes(term) || (c.email && c.email.toLowerCase().includes(term));
+              });
+
+              if (clientesFiltrados.length === 0) {
+                return (
+                  <div className="p-12 text-center text-gray-500 font-medium">
+                    No se encontraron clientes registrados en el sistema.
+                  </div>
+                );
+              }
+
+              return (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-white border-b border-gray-100 text-gray-400 text-xs uppercase tracking-widest font-semibold">
+                        <th className="px-6 py-4">Nombre Completo</th>
+                        <th className="px-6 py-4">Correo Electrónico</th>
+                        <th className="px-6 py-4">Teléfono</th>
+                        <th className="px-6 py-4">Fecha de Registro</th>
+                        <th className="px-6 py-4 text-center">Reservas Históricas</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {clientesFiltrados.map((cliente) => (
+                        <tr key={cliente.id} className="hover:bg-gray-50/80 transition-colors">
+                          <td className="px-6 py-5">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-10 h-10 rounded-full bg-footcall-light text-footcall-green flex items-center justify-center font-bold text-base border border-footcall-green/10 shadow-sm capitalize">
+                                {cliente.nombre ? cliente.nombre[0] : "C"}
+                              </div>
+                              <div>
+                                <p className="text-gray-900 font-bold">{cliente.nombre} {cliente.apellido}</p>
+                                <span className="text-xs text-gray-400">ID: #{cliente.id}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-5">
+                            <a href={`mailto:${cliente.email}`} className="text-gray-600 hover:text-footcall-green font-medium transition-colors">
+                              {cliente.email}
+                            </a>
+                          </td>
+                          <td className="px-6 py-5 text-gray-700 font-medium">{cliente.telefono}</td>
+                          <td className="px-6 py-5 text-gray-500 font-medium">{cliente.fecha_creacion}</td>
+                          <td className="px-6 py-5 text-center">
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-100">
+                              {cliente.total_reservas} reserv{cliente.total_reservas === 1 ? 'a' : 'as'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()
           )}
         </div>
-        
-        {loading ? (
-          <div className="p-12 text-center flex flex-col items-center justify-center">
-            <svg className="animate-spin h-8 w-8 text-footcall-green mb-3" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p className="text-gray-500 font-medium">Cargando reservas...</p>
+      ) : (
+        /* VISTA DE CALENDARIO (CANCHAS Y RESERVAS) */
+        <>
+          {/* Tarjetas de Canchas */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mb-10">
+            {loading ? (
+              /* Esqueleto de Carga */
+              Array.from({ length: 3 }).map((_, idx) => (
+                <div key={idx} className="bg-white rounded-2xl border border-gray-100 p-6 flex items-center justify-between animate-pulse">
+                  <div className="space-y-2 w-1/2">
+                    <div className="h-6 bg-gray-200 rounded w-full"></div>
+                    <div className="h-4 bg-gray-100 rounded w-1/2"></div>
+                  </div>
+                  <div className="h-8 bg-gray-200 rounded w-1/4"></div>
+                </div>
+              ))
+            ) : canchas.length === 0 ? (
+              <div className="col-span-full bg-white rounded-2xl border border-gray-100 p-6 text-center text-gray-500 font-medium">
+                No hay canchas registradas en el sistema.
+              </div>
+            ) : (
+              canchas.map((cancha) => (
+                <div key={cancha.cancha_id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between hover:shadow-md transition-shadow">
+                  <div className="mb-4 sm:mb-0">
+                    <h3 className="text-xl font-bold text-gray-900 mb-1">{cancha.nombre}</h3>
+                    <div className="flex items-center">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-800 capitalize">
+                        {cancha.tipo_superficie}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <span className="block text-2xl font-black text-footcall-green">${cancha.precio_por_hora.toLocaleString()}</span>
+                    <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">por hora</span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-        ) : reservas.length === 0 ? (
-          <div className="p-12 text-center text-gray-500 font-medium">
-            No hay reservas registradas para {vista === 'diaria' ? 'el día de hoy' : 'esta semana'}.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-white border-b border-gray-100 text-gray-400 text-xs uppercase tracking-widest font-semibold">
-                  <th className="px-6 py-4">Cliente</th>
-                  <th className="px-6 py-4">Fecha</th>
-                  <th className="px-6 py-4">Hora</th>
-                  <th className="px-6 py-4">Cancha</th>
-                  <th className="px-6 py-4">Estado</th>
-                  <th className="px-6 py-4 text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {reservas.map((reserva) => {
-                    let statusColor = "bg-gray-100 text-gray-800";
-                    if (reserva.estado === "confirmada") statusColor = "bg-green-100 text-green-800";
-                    if (reserva.estado === "pendiente") statusColor = "bg-yellow-100 text-yellow-800";
-                    if (reserva.estado === "cancelada") statusColor = "bg-red-100 text-red-800";
 
-                    return (
-                      <tr key={reserva.reserva_id} className="hover:bg-gray-50/80 transition-colors">
-                        <td className="px-6 py-5 font-bold text-gray-900">{reserva.cliente_nombre}</td>
-                        <td className="px-6 py-5 text-gray-600 font-medium">{reserva.fecha}</td>
-                        <td className="px-6 py-5 text-gray-900 font-bold">{reserva.hora_inicio}</td>
-                        <td className="px-6 py-5 text-gray-600 font-medium">Cancha #{reserva.cancha_id}</td>
-                        <td className="px-6 py-5">
-                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${statusColor}`}>
-                            {reserva.estado}
-                          </span>
-                        </td>
-                        <td className="px-6 py-5 text-right space-x-2">
-                          {reserva.estado === 'pendiente' ? (
-                            <>
-                              <button 
-                                onClick={() => actualizarEstado(reserva.reserva_id, 'confirmada')}
-                                className="px-3 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-extrabold shadow-sm transition-colors"
-                                title="Confirmar reserva"
-                              >
-                                Confirmar
-                              </button>
-                              <button 
-                                onClick={() => actualizarEstado(reserva.reserva_id, 'cancelada')}
-                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-extrabold shadow-sm transition-colors"
-                                title="Cancelar reserva"
-                              >
-                                Cancelar
-                              </button>
-                            </>
-                          ) : (
-                            <button 
-                              onClick={() => setReservaSeleccionada(reserva)}
-                              className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200 rounded-lg text-xs font-bold transition-colors"
-                            >
-                              Ver Detalles
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-              </tbody>
-            </table>
+          {/* Tabla de Reservas */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+              <h3 className="text-lg font-bold text-gray-900">Reservas Activas ({vista === 'diaria' ? 'Hoy' : 'Esta Semana'})</h3>
+              {sessionToken && (
+                <button 
+                  onClick={() => cargarDatos(sessionToken)}
+                  className="text-sm font-semibold text-footcall-green hover:text-footcall-green-hover transition-colors flex items-center"
+                >
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.2" /></svg>
+                  Recargar
+                </button>
+              )}
+            </div>
+            
+            {loading ? (
+              <div className="p-12 text-center flex flex-col items-center justify-center">
+                <svg className="animate-spin h-8 w-8 text-footcall-green mb-3" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="text-gray-500 font-medium">Cargando reservas...</p>
+              </div>
+            ) : reservas.length === 0 ? (
+              <div className="p-12 text-center text-gray-500 font-medium">
+                No hay reservas registradas para {vista === 'diaria' ? 'el día de hoy' : 'esta semana'}.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-white border-b border-gray-100 text-gray-400 text-xs uppercase tracking-widest font-semibold">
+                      <th className="px-6 py-4">Cliente</th>
+                      <th className="px-6 py-4">Fecha</th>
+                      <th className="px-6 py-4">Hora</th>
+                      <th className="px-6 py-4">Cancha</th>
+                      <th className="px-6 py-4">Estado</th>
+                      <th className="px-6 py-4 text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {reservas.map((reserva) => {
+                        let statusColor = "bg-gray-100 text-gray-800";
+                        if (reserva.estado === "confirmada") statusColor = "bg-green-100 text-green-800";
+                        if (reserva.estado === "pendiente") statusColor = "bg-yellow-100 text-yellow-800";
+                        if (reserva.estado === "cancelada") statusColor = "bg-red-100 text-red-800";
+
+                        return (
+                          <tr key={reserva.reserva_id} className="hover:bg-gray-50/80 transition-colors">
+                            <td className="px-6 py-5 font-bold text-gray-900">{reserva.cliente_nombre}</td>
+                            <td className="px-6 py-5 text-gray-600 font-medium">{reserva.fecha}</td>
+                            <td className="px-6 py-5 text-gray-900 font-bold">{reserva.hora_inicio}</td>
+                            <td className="px-6 py-5 text-gray-600 font-medium">Cancha #{reserva.cancha_id}</td>
+                            <td className="px-6 py-5">
+                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${statusColor}`}>
+                                {reserva.estado}
+                              </span>
+                            </td>
+                            <td className="px-6 py-5 text-right space-x-2">
+                              {reserva.estado === 'pendiente' ? (
+                                <>
+                                  <button 
+                                    onClick={() => actualizarEstado(reserva.reserva_id, 'confirmada')}
+                                    className="px-3 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-xs font-extrabold shadow-sm transition-colors"
+                                    title="Confirmar reserva"
+                                  >
+                                    Confirmar
+                                  </button>
+                                  <button 
+                                    onClick={() => actualizarEstado(reserva.reserva_id, 'cancelada')}
+                                    className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-extrabold shadow-sm transition-colors"
+                                    title="Cancelar reserva"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </>
+                              ) : (
+                                <button 
+                                  onClick={() => setReservaSeleccionada(reserva)}
+                                  className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200 rounded-lg text-xs font-bold transition-colors"
+                                >
+                                  Ver Detalles
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }
