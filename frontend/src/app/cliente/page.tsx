@@ -119,20 +119,9 @@ export default function ClienteDashboard() {
       const audio = new Audio(audioUrl);
       await audio.play();
 
-      // 3. Si la intención fue crear una reserva, agregamos dinámicamente un registro pendiente a la UI
-      if (intent === "crear_reserva") {
-        const nuevaReserva = {
-          reserva_id: Date.now(),
-          fecha: new Date().toISOString().split('T')[0],
-          hora_inicio: "18:00", // Hora tentativa
-          hora_fin: "19:00",
-          cancha: "Cancha 1 Principal",
-          superficie: "sintetica" as any,
-          estado: "pendiente" as any,
-          total_pago: 120000,
-          metodo_pago: "efectivo" as any
-        };
-        setHistorial(prev => [nuevaReserva, ...prev]);
+      // 3. Si la intención fue crear una reserva, recargamos el historial real de la base de datos
+      if (intent === "crear_reserva" && sessionToken) {
+        fetchHistorial(sessionToken);
       }
 
     } catch (error: any) {
