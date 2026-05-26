@@ -31,17 +31,19 @@ logger = logging.getLogger(__name__)
 # 2. Definir el lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Código que se ejecuta al iniciar la aplicación 
+    db = None
     try:
-        db = next(get_db())
+        db_generator = get_db()
+        db = next(db_generator)
         db.execute(text("SELECT 1"))
         logger.info("¡Conexión exitosa con la instancia de Supabase establecida!")
     except Exception as e:
         logger.error(f"Error conectando a Supabase al iniciar: {e}")
+    finally:
+        if db:
+            db.close()
     
-    yield   # Muy importante
-    
-    # Código que se ejecuta al apagar la aplicación 
+    yield   
     logger.info("Aplicación cerrándose correctamente...")
 
 # 3. Crear la aplicación FastAPI con lifespan
