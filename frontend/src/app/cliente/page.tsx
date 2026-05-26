@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { mockHistorialCliente } from "@/lib/mocks";
 
 export default function ClienteDashboard() {
   const router = useRouter();
@@ -49,15 +48,14 @@ export default function ClienteDashboard() {
         if (data.usuario_autenticado) {
           setUserName(data.usuario_autenticado.nombre || "Cliente");
         }
-        // Cargamos el historial (si el backend no retorna lista, usamos los datos del mockup inicial)
-        setHistorial(mockHistorialCliente.historial);
+        // Cargamos el historial de reservas reales
+        setHistorial(data.reservas || []);
       } else {
         console.warn("Error al obtener historial del cliente", res.status);
       }
     } catch (err) {
       console.warn("Error cargando historial:", err);
-      // Fallback a mock en caso de desconexión
-      setHistorial(mockHistorialCliente.historial);
+      setHistorial([]);
     } finally {
       setLoadingHistory(false);
     }

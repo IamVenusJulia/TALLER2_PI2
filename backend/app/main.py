@@ -81,23 +81,133 @@ def health_check(db: Session = Depends(get_db)):
         return {"status": "unhealthy", "database": "error", "details": str(e)}
 
 
-# Escenario 1 y 4: Endpoint protegido para Clientes
+# Escenario 1 y 4: Endpoint protegido para Clientes (con conexión a la base de datos real)
 @app.get("/api/cliente/historial")
-def get_cliente_historial(current_user: dict = Depends(get_current_user)):
-    return {
-        "message": "Historial de reservas obtenido con éxito",
-        "usuario_autenticado": current_user
-    }
+def get_cliente_historial(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        # El ID ya viene resuelto como BIGINT desde get_current_user gracias al auto-registro
+        usuario_id = current_user.get("id")
+        
+        # En caso de fallback de emergencia donde el id es un UUID en string, intentamos buscar por email
+        if isinstance(usuario_id, str):
+            query_user = text("SELECT id FROM usuarios WHERE email = :email AND eliminado = FALSE")
+            user_res = db.execute(query_user, {"email": current_user.get("email")}).fetchone()
+            if user_res:
+                usuario_id = user_res.id
+            else:
+                return {
+                    "message": "Historial de reservas obtenido con éxito",
+                    "usuario_autenticado": current_user,
+                    "reservas": []
+                }
+        
+        # Query de reservas reales del cliente
+        query_reservas = text("""
+            SELECT r.id AS reserva_id, r.fecha_reserva, r.total_pago, r.metodo_pago, r.estado,
+                   c.nombre AS cancha, c.tipo_superficie AS superficie,
+                   hc.hora_inicio, hc.hora_fin
+            FROM reservas r
+            JOIN horarios_cancha hc ON r.horario_cancha_id = hc.id
+            JOIN canchas c ON hc.cancha_id = c.id
+            WHERE r.usuario_id = :usuario_id
+            ORDER BY r.fecha_reserva DESC, r.id DESC;
+        """)
+        
+        result = db.execute(query_reservas, {"usuario_id": usuario_id}).mappings().all()
+        
+        reservas_lista = []
+        for row in result:
+            row_dict = dict(row)
+            # Formatear objetos de fecha y hora a strings
+            if row_dict.get("fecha_reserva"):
+                row_dict["fecha"] = str(row_dict["fecha_reserva"])
+            if row_dict.get("hora_inicio"):
+                row_dict["hora_inicio"] = str(row_dict["hora_inicio"])[:5]
+            if row_dict.get("hora_fin"):
+                row_dict["hora_fin"] = str(row_dict["hora_fin"])[:5]
+            if row_dict.get("total_pago"):
+                row_dict["total_pago"] = float(row_dict["total_pago"])
+            reservas_lista.append(row_dict)
+            
+        return {
+            "message": "Historial de reservas obtenido con éxito",
+            "usuario_autenticado": {
+                "id": current_user["id"],
+                "nombre": f"{user_res.nombre} {user_res.apellido}",
+                "rol": current_user["rol"]
+            },
+            "reservas": reservas_lista
+        }
+    except Exception as e:
+        logger.error(f"Error cargando historial de reservas: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error cargando historial: {str(e)}"
+        )
 
-# Escenario 2: Endpoint Panel de Administrador
+# Escenario 2: Endpoint Panel de Administrador (con conexión a la base de datos real)
 require_admin = RoleChecker(["admin"])
 
 @app.get("/api/admin/reservas-semana")
-def get_admin_reservas(current_user: dict = Depends(require_admin)):
-    return {
-        "message": "Panel de administración - Reservas de la semana",
-        "admin_info": current_user
-    }
+def get_admin_reservas(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin)
+):
+    try:
+        # 1. Obtener canchas disponibles
+        query_canchas = text("""
+            SELECT id AS cancha_id, nombre, tipo_superficie, precio_por_hora 
+            FROM canchas 
+            WHERE esta_activa = TRUE AND eliminado = FALSE;
+        """)
+        canchas_result = db.execute(query_canchas).mappings().all()
+        canchas_lista = []
+        for row in canchas_result:
+            row_dict = dict(row)
+            if row_dict.get("precio_por_hora"):
+                row_dict["precio_por_hora"] = float(row_dict["precio_por_hora"])
+            canchas_lista.append(row_dict)
+
+        # 2. Obtener reservas activas (con el nombre completo del cliente)
+        query_reservas = text("""
+            SELECT r.id AS reserva_id, 
+                   CONCAT(u.nombre, ' ', u.apellido) AS cliente_nombre,
+                   hc.cancha_id,
+                   r.fecha_reserva AS fecha,
+                   hc.hora_inicio,
+                   r.estado
+            FROM reservas r
+            JOIN usuarios u ON r.usuario_id = u.id
+            JOIN horarios_cancha hc ON r.horario_cancha_id = hc.id
+            WHERE u.eliminado = FALSE
+            ORDER BY r.fecha_reserva ASC, hc.hora_inicio ASC;
+        """)
+        reservas_result = db.execute(query_reservas).mappings().all()
+        reservas_lista = []
+        for row in reservas_result:
+            row_dict = dict(row)
+            if row_dict.get("fecha"):
+                row_dict["fecha"] = str(row_dict["fecha"])
+            if row_dict.get("hora_inicio"):
+                row_dict["hora_inicio"] = str(row_dict["hora_inicio"])[:5]
+            reservas_lista.append(row_dict)
+
+        return {
+            "admin": {
+                "nombre": current_user.get("nombre") or "Administrador"
+            },
+            "canchas_disponibles": canchas_lista,
+            "reservas_activas": reservas_lista
+        }
+    except Exception as e:
+        logger.error(f"Error cargando reservas de administracion: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error cargando reservas: {str(e)}"
+        )
 # HU-18 - Modelo de validación para cambio de estado
 class EstadoReservaEnum(str, Enum):
     confirmada = "confirmada"
@@ -185,11 +295,16 @@ def cambiar_estado_reserva(
             detail=f"Error interno en la actualización: {str(e)}"
         )
     
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional
+security_optional = HTTPBearer(auto_error=False)
+
 # ENDPOINT PRINCIPAL
 @app.post("/api/voice/process", status_code=status.HTTP_200_OK)
 async def process_voice_input(
     payload: SolicitudVoz,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_optional)
 ):
    """
     Endpoint: Recibe la transcripción de texto, procesa la intención con Gemini y retorna audio.
@@ -355,10 +470,26 @@ async def process_voice_input(
                     # # Tomamos la primera cancha disponible de la lista devuelta por la consulta
                     cancha_elegida = disponibilidad_canchas[0]
                     
-                    # Consultamos si existe el usuario por nombre en tu tabla 'usuarios', si no, asignamos ID 1 por defecto para desarrollo
-                    query_user = text("SELECT id FROM usuarios WHERE nombre ILIKE :nombre LIMIT 1")
-                    user_res = db.execute(query_user, {"nombre": nombre_usuario}).fetchone()
-                    usuario_id = user_res.id if user_res else 1
+                    # Intentamos obtener el usuario autenticado a partir del token si se envió
+                    usuario_id = None
+                    if credentials:
+                        try:
+                            from app.auth import get_current_user
+                            current_user = get_current_user(credentials, db)
+                            usuario_id = current_user.get("id")
+                            # Si es un string (fallback de emergencia), buscamos en la DB por su email
+                            if isinstance(usuario_id, str):
+                                query_user_auth = text("SELECT id FROM usuarios WHERE email = :email LIMIT 1")
+                                user_auth_res = db.execute(query_user_auth, {"email": current_user.get("email")}).fetchone()
+                                usuario_id = user_auth_res.id if user_auth_res else None
+                        except Exception as auth_err:
+                            logger.error(f"Error autenticando en proceso de voz: {auth_err}")
+                    
+                    # Si no está autenticado (ej: tests) o no se encontró en la base de datos, buscamos por nombre
+                    if not usuario_id or isinstance(usuario_id, str):
+                        query_user = text("SELECT id FROM usuarios WHERE nombre ILIKE :nombre LIMIT 1")
+                        user_res = db.execute(query_user, {"nombre": nombre_usuario}).fetchone()
+                        usuario_id = user_res.id if user_res else 1
                     
                     try:
                         # Ejecutamos el INSERT transaccional usando los datos mapeados y 'precio_por_hora' como total_pago
