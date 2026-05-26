@@ -14,6 +14,7 @@ export default function ClienteDashboard() {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [userName, setUserName] = useState("Daniel");
   const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [textInput, setTextInput] = useState("");
 
   const recognitionRef = useRef<any>(null);
 
@@ -233,6 +234,36 @@ export default function ClienteDashboard() {
             <p className="text-footcall-dark font-semibold text-lg leading-relaxed">{assistantResponse}</p>
           </div>
         )}
+
+        {/* Entrada de texto alternativa */}
+        <div className="w-full max-w-2xl mt-6 pt-6 border-t border-gray-100">
+          <form 
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!textInput.trim()) return;
+              const textToSend = textInput.trim();
+              setTextInput("");
+              setTranscription(`Enviando: "${textToSend}"...`);
+              setAssistantResponse("");
+              await enviarTextoBackend(textToSend);
+            }}
+            className="flex gap-2"
+          >
+            <input 
+              type="text" 
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              placeholder="O escribe tu solicitud aquí (ej: 'quiero reservar la cancha 1 mañana a las 6 pm')..." 
+              className="flex-1 px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-footcall-green focus:border-transparent transition-all bg-white text-gray-900"
+            />
+            <button 
+              type="submit"
+              className="px-6 py-3 bg-footcall-green hover:bg-footcall-green-hover text-white font-bold rounded-xl shadow-md transition-all transform hover:scale-[1.02] flex-shrink-0"
+            >
+              Enviar
+            </button>
+          </form>
+        </div>
       </section>
 
       {/* Historial de Reservas del Cliente */}
