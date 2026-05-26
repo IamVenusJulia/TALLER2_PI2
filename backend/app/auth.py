@@ -8,8 +8,20 @@ from app.database import get_db
 
 security = HTTPBearer()
 
-JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+import base64
+
+JWT_SECRET_RAW = os.getenv("SUPABASE_JWT_SECRET")
 JWT_ALGORITHM = "HS256"
+
+# El secreto JWT de Supabase viene codificado en base64. Para que PyJWT valide la firma 
+# correctamente, debemos decodificarlo a bytes (devolviendo una clave real de 64 bytes).
+try:
+    if JWT_SECRET_RAW:
+        JWT_SECRET = base64.b64decode(JWT_SECRET_RAW)
+    else:
+        JWT_SECRET = None
+except Exception:
+    JWT_SECRET = JWT_SECRET_RAW
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     token = credentials.credentials
