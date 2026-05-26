@@ -70,19 +70,65 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             user_data = {
                 "id": result.id,
                 "nombre": f"{result.nombre} {result.apellido}",
-                "rol": str(result.rol) # Retorna 'admin' o 'cliente'
+                "rol": str(result.rol), # Retorna 'admin' o 'cliente'
+                "email": email
             }
             return user_data
-    except Exception:
-        pass # Si falla o no hay registros, recurrimos de emergencia a la info del JWT
+        elif email:
+            # Si el usuario no existe en la tabla usuarios de la base de datos, lo registramos automáticamente
+            import random
+            import time
+            
+            full_name = user_metadata.get("full_name", email.split("@")[0] if email else "Usuario Anonimo")
+            parts = full_name.split(" ", 1)
+            nombre = parts[0]
+            apellido = parts[1] if len(parts) > 1 else ""
+            
+            # Generar un número de teléfono provisional único para cumplir con la restricción VARCHAR(20) NOT NULL UNIQUE
+            telefono_prov = f"57{int(time.time())}{random.randint(10, 99)}"[:20]
+            
+            rol_jwt = app_metadata.get("role", user_metadata.get("rol", "cliente"))
+            # Aseguramos que el rol sea uno de los valores permitidos del enum rol_usuario
+            rol = "admin" if rol_jwt == "admin" else "cliente"
+            
+            query_insert = text("""
+                INSERT INTO usuarios (nombre, apellido, telefono, email, rol, fecha_creacion, updated_at, eliminado)
+                VALUES (:nombre, :apellido, :telefono, :email, CAST(:rol AS rol_usuario), NOW(), NOW(), FALSE)
+                RETURNING id;
+            """)
+            
+            insert_res = db.execute(query_insert, {
+                "nombre": nombre,
+                "apellido": apellido,
+                "telefono": telefono_prov,
+                "email": email,
+                "rol": rol
+            })
+            db.commit()
+            
+            new_id = insert_res.fetchone().id
+            
+            user_data = {
+                "id": new_id,
+                "nombre": f"{nombre} {apellido}".strip(),
+                "rol": rol,
+                "email": email
+            }
+            return user_data
+    except Exception as e:
+        db.rollback()
+        # En caso de error al insertar, registramos en consola y procedemos con el fallback de emergencia
+        print(f"Error en auto-registro de usuario: {str(e)}")
 
     # Fallback/Emergencia: Extraer rol directo del JWT o asignarle 'cliente' por defecto
     rol_jwt = app_metadata.get("role", user_metadata.get("rol", "cliente"))
+    rol = "admin" if rol_jwt == "admin" else "cliente"
     
     user_data = {
         "id": supabase_uid,
         "nombre": user_metadata.get("full_name", email.split("@")[0] if email else "Usuario Anonimo"),
-        "rol": rol_jwt
+        "rol": rol,
+        "email": email
     }
     
     return user_data

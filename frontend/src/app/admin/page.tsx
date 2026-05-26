@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { mockReservasAdmin } from "@/lib/mocks";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -43,28 +42,7 @@ export default function AdminDashboard() {
     checkAuthAndFetch();
   }, [router]);
 
-  // Simular la llegada de una nueva reserva pendiente por voz a los 6 segundos (HU-16)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const nuevaReserva = {
-        reserva_id: 999,
-        cliente_nombre: "David Arias",
-        cancha_id: 1,
-        fecha: new Date().toISOString().split('T')[0],
-        hora_inicio: "19:00",
-        estado: "pendiente"
-      };
-
-      setReservas(prev => {
-        if (prev.some(r => r.reserva_id === 999)) return prev;
-        return [nuevaReserva, ...prev];
-      });
-
-      setAlerta(nuevaReserva);
-    }, 6000);
-
-    return () => clearTimeout(timer);
-  }, []);
+  // Sincronización de reservas en tiempo real mediante el botón de Recargar vinculada al backend
 
   const cargarDatos = async (token: string) => {
     try {
@@ -80,20 +58,19 @@ export default function AdminDashboard() {
 
       if (res.ok) {
         const data = await res.json();
-        if (data.admin_info) {
-          setAdminName(data.admin_info.nombre || "Administrador");
+        if (data.admin) {
+          setAdminName(data.admin.nombre || "Administrador");
         }
-        // Cargamos las canchas y reservas
-        setCanchas(mockReservasAdmin.canchas_disponibles);
-        setReservas(mockReservasAdmin.reservas_activas);
+        // Cargamos las canchas y reservas reales del backend
+        setCanchas(data.canchas_disponibles || []);
+        setReservas(data.reservas_activas || []);
       } else {
         console.warn("Error al cargar reservas de administración", res.status);
       }
     } catch (err) {
       console.warn("Error cargando panel admin:", err);
-      // Fallback a mocks en caso de desconexión
-      setCanchas(mockReservasAdmin.canchas_disponibles);
-      setReservas(mockReservasAdmin.reservas_activas);
+      setCanchas([]);
+      setReservas([]);
     } finally {
       setLoading(false);
     }
