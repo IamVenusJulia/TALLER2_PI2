@@ -68,7 +68,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         
         if result:
             user_data = {
-                "id": result.id,
+                "id": supabase_uid,
                 "nombre": f"{result.nombre} {result.apellido}",
                 "rol": str(result.rol), # Retorna 'admin' o 'cliente'
                 "email": email
@@ -92,12 +92,13 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             rol = "admin" if rol_jwt == "admin" else "cliente"
             
             query_insert = text("""
-                INSERT INTO usuarios (nombre, apellido, telefono, email, rol, fecha_creacion, updated_at, eliminado)
-                VALUES (:nombre, :apellido, :telefono, :email, CAST(:rol AS rol_usuario), NOW(), NOW(), FALSE)
+                INSERT INTO usuarios (id,nombre, apellido, telefono, email, rol, fecha_creacion, updated_at, eliminado)
+                VALUES (:id,:nombre, :apellido, :telefono, :email, CAST(:rol AS rol_usuario), NOW(), NOW(), FALSE)
                 RETURNING id;
             """)
             
             insert_res = db.execute(query_insert, {
+                "id": supabase_uid,
                 "nombre": nombre,
                 "apellido": apellido,
                 "telefono": telefono_prov,
@@ -106,10 +107,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             })
             db.commit()
             
-            new_id = insert_res.fetchone().id
-            
             user_data = {
-                "id": new_id,
+                "id": supabase_uid,
                 "nombre": f"{nombre} {apellido}".strip(),
                 "rol": rol,
                 "email": email
