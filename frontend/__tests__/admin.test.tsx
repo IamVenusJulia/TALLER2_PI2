@@ -1,0 +1,145 @@
+import React from 'react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import AdminDashboard from '@/app/admin/page'
+import { supabase } from '@/lib/supabase'
+
+// Mock next/navigation
+jest.mock('next/navigation', () => ({
+  useRouter() {
+    return {
+      push: jest.fn(),
+      prefetch: () => null,
+    }
+  },
+}))
+
+// Mock Supabase
+jest.mock('@/lib/supabase', () => ({
+  supabase: {
+    auth: {
+      getSession: jest.fn(),
+    },
+  },
+}))
+
+describe('AdminDashboard Component', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    jest.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  test('debe cargar y renderizar el panel de control del administrador', async () => {
+    // 1. Mock de sesión de administrador
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'admin-jwt-token',
+          user: {
+            email: 'admin@footcall.com',
+            user_metadata: { full_name: 'Admin FootCall', rol: 'admin' }
+          }
+        }
+      }
+    })
+
+    // 2. Mock de API de reservas-semana
+    const mockAdminData = {
+      message: 'Panel de administración - Reservas de la semana',
+      admin_info: {
+        id: 'usr_000',
+        nombre: 'Admin FootCall',
+        rol: 'admin'
+      }
+    }
+
+    global.fetch = jest.fn().mockImplementation((url) => {
+      if (url.toString().includes('/api/admin/reservas-semana')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(mockAdminData)
+        } as any)
+      }
+      return Promise.reject(new Error('Unknown URL'))
+    })
+
+    render(<AdminDashboard />)
+
+    // Debe mostrar la bienvenida
+    await waitFor(() => {
+      expect(screen.getByText('Bienvenido de nuevo, Admin FootCall')).toBeInTheDocument()
+    })
+
+    // Debe mostrar las canchas del mock de fallback
+    await waitFor(() => {
+      expect(screen.getByText('Cancha 1 Principal')).toBeInTheDocument()
+      expect(screen.getByText(/120/)).toBeInTheDocument()
+    })
+  })
+
+  test('debe disparar la actualizacion de estado al confirmar una reserva (HU-17)', async () => {
+    (supabase.auth.getSession as jest.Mock).mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'admin-jwt-token',
+          user: { email: 'admin@footcall.com', user_metadata: { rol: 'admin' } }
+        }
+      }
+    })
+
+    const mockAdminData = {
+      message: 'Panel de administración - Reservas de la semana',
+      admin_info: {
+        id: 'usr_000',
+        nombre: 'Admin FootCall',
+        rol: 'admin'
+      }
+    }
+
+    global.fetch = jest.fn().mockImplementation((url, options) => {
+      const urlStr = url.toString();
+      const method = options?.method || 'GET';
+      
+      if (method === 'PATCH' && urlStr.includes('/api/admin/reservas/505/estado')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ message: 'Success' })
+        } as any);
+      }
+      
+      if (method === 'GET' && urlStr.includes('/api/admin/reservas-semana')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(mockAdminData)
+        } as any);
+      }
+      
+      return Promise.reject(new Error(`Unhandled fetch: ${method} ${urlStr}`));
+    });
+
+    render(<AdminDashboard />)
+
+    // Esperar a que se pinte la tabla de reservas activas
+    let confirmButton: HTMLElement | null = null
+    await waitFor(() => {
+      confirmButton = screen.getByRole('button', { name: 'Confirmar' })
+      expect(confirmButton).toBeInTheDocument()
+    })
+
+    // Hacer click en confirmar
+    fireEvent.click(confirmButton!)
+
+    // Debe mostrar el bloqueo de pantalla (loading)
+    expect(screen.getByText('Procesando solicitud')).toBeInTheDocument()
+
+    // Esperar a que se complete y llame a la API PATCH
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/admin/reservas/505/estado'),
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ estado: 'confirmada' })
+        })
+      )
+    })
+  })
+})

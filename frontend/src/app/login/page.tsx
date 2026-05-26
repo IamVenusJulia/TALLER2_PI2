@@ -11,11 +11,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setErrorMsg('');
+    setSuccessMsg('');
 
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -25,8 +28,9 @@ export default function LoginPage() {
 
       if (error) throw error;
 
-      // Temporary role-based routing logic
-      if (email.toLowerCase().includes('admin')) {
+      // Role-based routing logic
+      const userRole = data.user?.user_metadata?.rol || (email.toLowerCase().includes('admin') ? 'admin' : 'cliente');
+      if (userRole === 'admin') {
         router.push('/admin');
       } else {
         router.push('/cliente');
@@ -34,6 +38,59 @@ export default function LoginPage() {
     } catch (error: any) {
       setErrorMsg(error.message || 'Error al iniciar sesión');
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: email.split('@')[0],
+            rol: 'cliente'
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      if (data.session) {
+        router.push('/cliente');
+      } else {
+        setSuccessMsg('¡Registro exitoso! Revisa tu correo de confirmación para activar tu cuenta.');
+        setIsSignUp(false);
+        setEmail('');
+        setPassword('');
+      }
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Error al registrarse');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/cliente`
+        }
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      setErrorMsg(error.message || 'Error al iniciar sesión con Google');
       setLoading(false);
     }
   };
@@ -50,7 +107,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {/* Lado derecho: Formulario de Login */}
+      {/* Lado derecho: Formulario de Login / Registro */}
       <div className="w-full md:w-1/2 flex flex-col justify-center px-8 sm:px-16 lg:px-24 py-12 bg-background">
         <div className="max-w-md w-full mx-auto">
           {/* Logo */}
@@ -60,18 +117,28 @@ export default function LoginPage() {
               alt="FootCall Logo" 
               width={180} 
               height={180} 
+              style={{ height: 'auto' }}
               className="object-contain drop-shadow-md"
               priority
             />
           </div>
 
-          <h2 className="text-3xl font-bold text-foreground mb-2 text-center tracking-tight">Bienvenido a FootCall</h2>
-          <p className="text-gray-500 mb-8 text-center">Ingresa a tu cuenta para continuar</p>
+          <h2 className="text-3xl font-bold text-foreground mb-2 text-center tracking-tight">
+            {isSignUp ? 'Crea tu cuenta' : 'Bienvenido a FootCall'}
+          </h2>
+          <p className="text-gray-500 mb-8 text-center">
+            {isSignUp ? 'Regístrate para reservar tus canchas' : 'Ingresa a tu cuenta para continuar'}
+          </p>
 
-          <form className="space-y-5" onSubmit={handleLogin}>
+          <form className="space-y-5" onSubmit={isSignUp ? handleSignUp : handleLogin}>
             {errorMsg && (
               <div className="p-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg text-center font-medium">
                 {errorMsg}
+              </div>
+            )}
+            {successMsg && (
+              <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-lg text-center font-medium">
+                {successMsg}
               </div>
             )}
             
@@ -101,20 +168,22 @@ export default function LoginPage() {
               />
             </div>
 
-            <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center">
-                <input id="remember" type="checkbox" className="h-4 w-4 text-footcall-green focus:ring-footcall-green border-gray-300 rounded" />
-                <label htmlFor="remember" className="ml-2 block text-sm text-gray-600">Recuérdame</label>
+            {!isSignUp && (
+              <div className="flex items-center justify-between pt-2">
+                <div className="flex items-center">
+                  <input id="remember" type="checkbox" className="h-4 w-4 text-footcall-green focus:ring-footcall-green border-gray-300 rounded" />
+                  <label htmlFor="remember" className="ml-2 block text-sm text-gray-600">Recuérdame</label>
+                </div>
+                <a href="#" className="text-sm font-semibold text-footcall-green hover:text-footcall-green-hover transition-colors">¿Olvidaste tu contraseña?</a>
               </div>
-              <a href="#" className="text-sm font-semibold text-footcall-green hover:text-footcall-green-hover transition-colors">¿Olvidaste tu contraseña?</a>
-            </div>
+            )}
 
             <button 
               type="submit" 
               disabled={loading}
               className={`w-full flex justify-center py-3.5 px-4 border border-transparent rounded-xl shadow-md text-sm font-bold text-white transition-all transform ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-footcall-green hover:bg-footcall-green-hover hover:scale-[1.02] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-footcall-green'}`}
             >
-              {loading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
+              {loading ? (isSignUp ? 'Creando cuenta...' : 'Iniciando sesión...') : (isSignUp ? 'Registrarse' : 'Iniciar Sesión')}
             </button>
           </form>
 
@@ -131,6 +200,7 @@ export default function LoginPage() {
             <div className="mt-6">
               <button 
                 type="button" 
+                onClick={handleGoogleLogin}
                 className="w-full flex justify-center items-center py-3.5 px-4 border border-gray-200 rounded-xl shadow-sm bg-white text-sm font-semibold text-gray-700 hover:bg-gray-50 focus:outline-none transition-all transform hover:scale-[1.02]"
               >
                 <svg className="w-5 h-5 mr-3" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -145,7 +215,37 @@ export default function LoginPage() {
           </div>
 
           <p className="mt-8 text-center text-sm text-gray-500 font-medium">
-            ¿No tienes una cuenta? <a href="#" className="font-bold text-footcall-green hover:text-footcall-green-hover transition-colors">Regístrate aquí</a>
+            {isSignUp ? (
+              <>
+                ¿Ya tienes una cuenta?{' '}
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(false);
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                  }}
+                  className="font-bold text-footcall-green hover:text-footcall-green-hover transition-colors focus:outline-none"
+                >
+                  Inicia sesión aquí
+                </button>
+              </>
+            ) : (
+              <>
+                ¿No tienes una cuenta?{' '}
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setIsSignUp(true);
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                  }}
+                  className="font-bold text-footcall-green hover:text-footcall-green-hover transition-colors focus:outline-none"
+                >
+                  Regístrate aquí
+                </button>
+              </>
+            )}
           </p>
 
         </div>

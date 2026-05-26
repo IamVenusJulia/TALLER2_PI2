@@ -1,5 +1,7 @@
 import os
 import jwt
+from jwt import PyJWKClient
+import base64
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -8,16 +10,38 @@ from app.database import get_db
 
 security = HTTPBearer()
 
-JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-JWT_ALGORITHM = "HS256"
+# URL de JWKS de Supabase para obtener las claves públicas asimétricas del proyecto (ES256)
+SUPABASE_JWKS_URL = "https://jieduufpryoypaasafpg.supabase.co/auth/v1/.well-known/jwks.json"
+jwk_client = PyJWKClient(SUPABASE_JWKS_URL)
+
+JWT_SECRET_RAW = os.getenv("SUPABASE_JWT_SECRET")
+
+# El secreto JWT de Supabase viene codificado en base64. Para que PyJWT valide la firma 
+# HS256 correctamente, debemos decodificarlo a bytes (devolviendo una clave real de 64 bytes).
+try:
+    if JWT_SECRET_RAW:
+        # Intentamos decodificar si viene con padding de Base64
+        JWT_SECRET = base64.b64decode(JWT_SECRET_RAW)
+    else:
+        JWT_SECRET = None
+except Exception:
+    JWT_SECRET = JWT_SECRET_RAW
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     token = credentials.credentials
     
     # Escenario 3: Petición sin credenciales o Token inválido/expirado
     try:
-        # Nota: Ponemos options={"verify_aud": False} temporalmente si estás testeando con tokens JWT estándar creados a mano.
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg", "HS256")
+        
+        if alg == "HS256":
+            # Si es HS256, usamos la clave secreta simétrica (decodificada de base64)
+            payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+        else:
+            # Si es ES256 u otro asimétrico, obtenemos la clave pública del JWKS de Supabase
+            signing_key = jwk_client.get_signing_key_from_jwt(token)
+            payload = jwt.decode(token, signing_key.key, algorithms=[alg], options={"verify_aud": False})
         
         supabase_uid = payload.get("sub")
         email = payload.get("email")
@@ -38,7 +62,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de autenticación inválido.")
 
     # Escenario 4: Inyección del contexto del usuario
-    # Primero intentamos buscarlo en la tabla de usuarios para obtener su rol real y nombre completo, pero si falla, recurrimos a la info del JWT para no bloquear tu demo
     try:
         query = text("SELECT id, nombre, apellido, rol FROM usuarios WHERE email = :email AND eliminado = FALSE")
         result = db.execute(query, {"email": email}).fetchone()
@@ -51,7 +74,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             }
             return user_data
     except Exception:
-        pass # Si falla o no hay registros, recurrimos de emergencia a la info del JWT para no bloquear tu demo
+        pass # Si falla o no hay registros, recurrimos de emergencia a la info del JWT
 
     # Fallback/Emergencia: Extraer rol directo del JWT o asignarle 'cliente' por defecto
     rol_jwt = app_metadata.get("role", user_metadata.get("rol", "cliente"))
