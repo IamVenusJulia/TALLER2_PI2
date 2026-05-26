@@ -12,7 +12,7 @@ export default function AdminLayout({
       <aside className="w-full md:w-64 bg-white border-r border-gray-200 flex-shrink-0">
         <div className="h-full flex flex-col">
           <div className="h-20 flex items-center px-6 border-b border-gray-100">
-            <Image src="/LogoFinal.png" alt="FootCall Logo" width={140} height={45} className="object-contain" priority />
+            <Image src="/LogoFinal.png" alt="FootCall Logo" width={140} height={45} style={{ height: 'auto' }} className="object-contain" priority />
           </div>
           <nav className="flex-1 px-4 py-6 space-y-2">
             <Link href="/admin" className="flex items-center px-4 py-3 text-sm font-bold text-white bg-footcall-green rounded-xl shadow-sm">
