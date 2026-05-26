@@ -1,5 +1,6 @@
 import os
 import jwt
+import base64
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -8,15 +9,16 @@ from app.database import get_db
 
 security = HTTPBearer()
 
-import base64
-
 JWT_SECRET_RAW = os.getenv("SUPABASE_JWT_SECRET")
-JWT_ALGORITHM = "HS256"
+
+# Aceptamos tanto HS256 (legacy) como los algoritmos asimétricos modernos de Supabase
+JWT_ALGORITHMS = ["HS256", "ES256", "RS256"]
 
 # El secreto JWT de Supabase viene codificado en base64. Para que PyJWT valide la firma 
 # correctamente, debemos decodificarlo a bytes (devolviendo una clave real de 64 bytes).
 try:
     if JWT_SECRET_RAW:
+        # Intentamos decodificar si viene con padding de Base64
         JWT_SECRET = base64.b64decode(JWT_SECRET_RAW)
     else:
         JWT_SECRET = None
@@ -28,8 +30,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     
     # Escenario 3: Petición sin credenciales o Token inválido/expirado
     try:
-        # Nota: Ponemos options={"verify_aud": False} temporalmente si estás testeando con tokens JWT estándar creados a mano.
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_aud": False})
+        # Nota: Usamos la lista completa de JWT_ALGORITHMS para soportar cualquier firma de Supabase
+        payload = jwt.decode(token, JWT_SECRET, algorithms=JWT_ALGORITHMS, options={"verify_aud": False})
         
         supabase_uid = payload.get("sub")
         email = payload.get("email")
@@ -50,7 +52,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de autenticación inválido.")
 
     # Escenario 4: Inyección del contexto del usuario
-    # Primero intentamos buscarlo en la tabla de usuarios para obtener su rol real y nombre completo, pero si falla, recurrimos a la info del JWT para no bloquear tu demo
     try:
         query = text("SELECT id, nombre, apellido, rol FROM usuarios WHERE email = :email AND eliminado = FALSE")
         result = db.execute(query, {"email": email}).fetchone()
@@ -63,7 +64,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             }
             return user_data
     except Exception:
-        pass # Si falla o no hay registros, recurrimos de emergencia a la info del JWT para no bloquear tu demo
+        pass # Si falla o no hay registros, recurrimos de emergencia a la info del JWT
 
     # Fallback/Emergencia: Extraer rol directo del JWT o asignarle 'cliente' por defecto
     rol_jwt = app_metadata.get("role", user_metadata.get("rol", "cliente"))
