@@ -130,6 +130,42 @@ export default function ClienteDashboard() {
     }
   };
 
+  const handleCancelarReserva = async (reservaId: number) => {
+    if (!window.confirm("¿Estás seguro de que deseas cancelar esta reserva?")) {
+      return;
+    }
+    
+    try {
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://taller2-pi2-2.onrender.com';
+      
+      const headersInit: HeadersInit = {
+        'Content-Type': 'application/json'
+      };
+      if (sessionToken) {
+        headersInit['Authorization'] = `Bearer ${sessionToken}`;
+      }
+
+      const res = await fetch(`${apiBaseUrl}/api/cliente/reservas/${reservaId}/cancelar`, {
+        method: 'PATCH',
+        headers: headersInit
+      });
+
+      if (res.ok) {
+        // Actualizamos localmente el estado de la reserva a cancelada en lugar de borrarla
+        setHistorial(prev => 
+          prev.map(r => r.reserva_id === reservaId ? { ...r, estado: 'cancelada' } : r)
+        );
+        alert("Tu reserva ha sido cancelada con éxito.");
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Error al cancelar: ${errData.detail || 'Problema en el servidor'}`);
+      }
+    } catch (err) {
+      console.error("Error cancelando reserva:", err);
+      alert("Error al intentar cancelar la reserva. Por favor intenta de nuevo.");
+    }
+  };
+
   const toggleVoiceAgent = () => {
     if (isListening) {
       if (recognitionRef.current) {
@@ -305,7 +341,8 @@ export default function ClienteDashboard() {
                   <th className="px-6 py-4">Hora</th>
                   <th className="px-6 py-4">Cancha</th>
                   <th className="px-6 py-4">Pago</th>
-                  <th className="px-6 py-4 text-right">Estado</th>
+                  <th className="px-6 py-4">Estado</th>
+                  <th className="px-6 py-4 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -327,10 +364,21 @@ export default function ClienteDashboard() {
                         <p className="text-footcall-green font-bold">${reserva.total_pago.toLocaleString()}</p>
                         <p className="text-xs text-gray-500 capitalize">{reserva.metodo_pago}</p>
                       </td>
-                      <td className="px-6 py-5 text-right">
+                      <td className="px-6 py-5">
                         <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${statusColor}`}>
                           {reserva.estado}
                         </span>
+                      </td>
+                      <td className="px-6 py-5 text-right">
+                        {(reserva.estado === "pendiente" || reserva.estado === "confirmada") && (
+                          <button
+                            onClick={() => handleCancelarReserva(reserva.reserva_id)}
+                            className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 font-bold text-xs rounded-lg transition-colors shadow-sm"
+                            title="Cancelar reserva"
+                          >
+                            Cancelar
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
