@@ -136,7 +136,7 @@ def get_cliente_historial(
             "message": "Historial de reservas obtenido con éxito",
             "usuario_autenticado": {
                 "id": current_user["id"],
-                "nombre": f"{user_res.nombre} {user_res.apellido}",
+                "nombre": current_user.get("nombre") or "Cliente",
                 "rol": current_user["rol"]
             },
             "reservas": reservas_lista
@@ -342,6 +342,8 @@ async def process_voice_input(
     """
    try:
         inicio_procesamiento = time.time()
+        latencia_llm = 0
+        latencia_tts = 0
         
         texto_real = payload.texto_transcrito.strip()
         nombre_usuario = payload.usuario.nombre
@@ -409,6 +411,7 @@ async def process_voice_input(
         4. Para el campo 'deporte', extrae ÚNICAMENTE el tipo de superficie si el usuario la menciona ('sintética' o 'natural'). Si dice 'fútbol 5' o no la especifica, déjalo como null.
         """
         # Llamada al LLM enviándole la configuración con el prompt dinámico montado en caliente
+        inicio_llm = time.time()
         response_llm = gemini_client.models.generate_content(
             model=MODELO_GEMINI,
             contents=f"Texto del usuario: '{texto_real}'",
@@ -421,6 +424,8 @@ async def process_voice_input(
                 response_schema=IntencionReserva,
             )
         )
+        fin_llm = time.time()
+        latencia_llm = int((fin_llm - inicio_llm) * 1000)
         
         intencion_extraida = json.loads(response_llm.text)
 
@@ -556,11 +561,14 @@ async def process_voice_input(
             texto_asistente = f"Entendido {nombre_usuario}. ¿En que mas te puedo colaborar?"      
 
         # Síntesis de testo a voz (TTS)
+        inicio_tts = time.time()
         tts = gTTS(text=texto_asistente, lang='es', tld='com', slow=False)
         audio_buffer = BytesIO()
         tts.write_to_fp(audio_buffer)
         audio_bytes = audio_buffer.getvalue()
         audio_buffer.close()
+        fin_tts = time.time()
+        latencia_tts = int((fin_tts - inicio_tts) * 1000)
 
         # Limpiar acentos y caracteres especiales de los textos para los headers HTTP si coordino con front puedo mejorar esto usando urllib.parse.quote
         texto_real_limpio = remover_acentos(texto_real)
@@ -577,14 +585,22 @@ async def process_voice_input(
             log_user_res = db.execute(query_log_user, {"nombre": nombre_usuario}).fetchone()
             log_usuario_id = log_user_res.id if log_user_res else None
             
+            # Cálculo de costo estimado y tokens totales
+            tokens_totales = tokens_input + tokens_output
+            costo_estimado = float(tokens_totales * 0.000000075)
+            
             # Insertamos la telemetría exacta requerida por la HU-20 en tu tabla 'logs_conversaciones'
             query_insert_log = text("""
                 INSERT INTO logs_conversaciones (
                     usuario_id, session_id, texto_usuario, texto_respuesta, 
-                    latencia_total_ms, error_transcripcion, tokens_input, tokens_output, fecha_registro
+                    latencia_llm_ms, latencia_tts_ms, latencia_total_ms, 
+                    error_transcripcion, tokens_input, tokens_output, 
+                    costo_estimado_usd, fecha_registro
                 ) VALUES (
                     :usuario_id, :session_id, :texto_usuario, :texto_respuesta, 
-                    :latencia_total, FALSE, :tokens_input, :tokens_output, NOW()
+                    :latencia_llm, :latencia_tts, :latencia_total, 
+                    FALSE, :tokens_input, :tokens_output, 
+                    :costo_estimado, NOW()
                 );
             """)
             
@@ -593,9 +609,12 @@ async def process_voice_input(
                 "session_id": "session_voice_api",
                 "texto_usuario": texto_real,
                 "texto_respuesta": texto_asistente,
+                "latencia_llm": latencia_llm,
+                "latencia_tts": latencia_tts,
                 "latencia_total": latencia_total,
                 "tokens_input": tokens_input,
-                "tokens_output": tokens_output
+                "tokens_output": tokens_output,
+                "costo_estimado": costo_estimado
             })
             db.commit()
             logger.info("HU-20: Telemetría e historial de conversación guardados con éxito en Supabase.")
