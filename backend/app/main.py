@@ -3,9 +3,8 @@ import time
 import json
 import unicodedata# Para la función de remover acentos de forma limpia
 from datetime import datetime
-from fastapi import FastAPI, Depends, Response, UploadFile, File, HTTPException, status
+from fastapi import FastAPI, Depends, Response, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -18,11 +17,21 @@ from google import genai
 from google.genai import types
 from gtts import gTTS
 from enum import Enum
+import urllib.parse
 
-# función para remover acentos y eñes de forma limpia 
-def remover_acentos(texto: str) -> str:
-    """Remueve tildes y eñes de forma limpia para cumplir con el estándar ASCII de HTTP"""
-    return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
+def codificar_header_seguro(texto: str) -> str:
+    """Codifica el texto en formato URL para que viaje seguro por HTTP preservando tildes y eñes"""
+    if not texto:
+        return ""
+    return urllib.parse.quote(texto)
+
+def normalizar_para_base_datos(texto: str) -> str:
+    """Limpia tildes para búsquedas SQL pero CONSERVA la Ñ/ñ intacta"""
+    if not texto:
+        return ""
+    texto_descompuesto = unicodedata.normalize('NFD', texto.lower().strip())
+    # Filtramos tildes pero dejamos la virgulilla de la ñ (\u0303)
+    return "".join(c for c in texto_descompuesto if unicodedata.category(c) != 'Mn' or c == '\u0303')
 
 # 1. Configuración de logs
 logging.basicConfig(level=logging.INFO)
@@ -326,6 +335,72 @@ def cambiar_estado_reserva(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno en la actualización: {str(e)}"
         )
+
+# ENDPOINT PARA QUE UN CLIENTE CANCELE SU PROPIA RESERVA
+@app.patch("/api/cliente/reservas/{reserva_id}/cancelar", status_code=status.HTTP_200_OK)
+def cliente_cancelar_reserva(
+    reserva_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)  # Requerimos token del cliente
+):
+    try:
+        usuario_id = current_user.get("id")
+        
+        # 1. Buscar la reserva en la base de datos
+        query_reserva = text("SELECT id, usuario_id, estado FROM reservas WHERE id = :reserva_id LIMIT 1")
+        reserva = db.execute(query_reserva, {"reserva_id": reserva_id}).fetchone()
+        
+        if not reserva:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="La reserva que intentas cancelar no existe."
+            )
+            
+        # 2. Control de Seguridad: Verificar que el cliente autenticado sea realmente el dueño de la reserva
+        db_usuario_id = reserva.usuario_id
+        
+        # Si el usuario es cliente, validamos pertenencia
+        if current_user.get("rol") == "cliente":
+            # Si el ID en current_user es un string (Supabase UUID), buscamos el ID numérico de la DB
+            if isinstance(usuario_id, str):
+                query_user_db = text("SELECT id FROM usuarios WHERE email = :email LIMIT 1")
+                user_db = db.execute(query_user_db, {"email": current_user.get("email")}).fetchone()
+                usuario_id = user_db.id if user_db else None
+                
+            if usuario_id != db_usuario_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="No tienes permisos para cancelar esta reserva."
+                )
+                
+        # 3. Comprobar si ya estaba cancelada anteriormente
+        if reserva.estado == "cancelada":
+            return {"message": "La reserva ya se encontraba cancelada."}
+            
+        # 4. Actualizar el estado a 'cancelada'
+        query_update = text("""
+            UPDATE reservas 
+            SET estado = 'cancelada', updated_at = NOW() 
+            WHERE id = :reserva_id
+        """)
+        db.execute(query_update, {"reserva_id": reserva_id})
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": f"Reserva #{reserva_id} cancelada con éxito por el cliente."
+        }
+        
+    except HTTPException as http_ex:
+        raise http_ex
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error cancelando reserva {reserva_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno al cancelar la reserva: {str(e)}"
+        )
+    
     
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
@@ -449,10 +524,7 @@ async def process_voice_input(
         superficie_solicitada = None
 
         if superficie_raw:
-            superficie_solicitada = (
-                superficie_raw.lower().strip()
-                .replace("é", "e").replace("á", "a").replace("í", "i").replace("ó", "o").replace("ú", "u")
-            )
+            superficie_solicitada = normalizar_para_base_datos(superficie_raw)
         
         # validación de parametros mínimos antes de proceder con la consulta de disponibilidad
         if intencion_extraida.get("intencion") in ["crear_reserva", "consultar_disponibilidad"] and fecha_str and hora_str:
@@ -492,19 +564,22 @@ async def process_voice_input(
                 if hasattr(row_dict.get("hora_inicio"), "strftime"):
                     row_dict["hora_inicio"] = row_dict["hora_inicio"].strftime("%H:%M:%S")
                 disponibilidad_canchas.append(row_dict)
-
-        # Generación de respuesta conversacional
+        # Control de la respuesta conversacional y blindaje contra el 'None'
         saludo_inicial = intencion_extraida.get("respuesta_asistente") or "Listo."
         
+        # Validamos dinámicamente la hora para que no imprima textualmente "None"
+        texto_hora_asistente = f"a las {hora_str}" if hora_str else "en ese horario"
+
         if intencion_extraida.get("intencion") in ["crear_reserva", "consultar_disponibilidad"]:
             if len(disponibilidad_canchas) == 0:
-                texto_asistente = f"Lo siento {nombre_usuario}, para el dia {fecha_str} a las {hora_str} no nos quedan canchas disponibles."
+                # Usamos texto_hora_asistente en lugar de forzar {hora_str} directamente
+                texto_asistente = f"Lo siento {nombre_usuario}, para el dia {fecha_str} {texto_hora_asistente} no nos quedan canchas disponibles."
             else:
                 canchas_nombres = [c['cancha_nombre'] for c in disponibilidad_canchas]                
                 
                 # HU-19: Si la intención extraída del LLM es guardar una reserva y encontramos disponibilidad, procedemos con el INSERT
                 if intencion_extraida.get("intencion") == "crear_reserva":
-                    # # Tomamos la primera cancha disponible de la lista devuelta por la consulta
+                    # Tomamos la primera cancha disponible de la lista devuelta por la consulta
                     cancha_elegida = disponibilidad_canchas[0]
                     
                     # Intentamos obtener el usuario autenticado a partir del token si se envió
@@ -544,7 +619,7 @@ async def process_voice_input(
                         db.commit() # Guardamos la reserva en Supabase de manera persistente
                         
                         # Modificamos el texto para informarle al usuario que su reserva quedó registrada exitosamente
-                        texto_asistente = f"¡Excelente {nombre_usuario}! He registrado tu reserva para la cancha {cancha_elegida['cancha_nombre']} el dia {fecha_str} a las {hora_str} en estado pendiente."
+                        texto_asistente = f"¡Excelente {nombre_usuario}! He registrado tu reserva para la cancha {cancha_elegida['cancha_nombre']} el dia {fecha_str} {texto_hora_asistente} en estado pendiente."
                         logger.info(f"HU-19: Reserva guardada en DB exitosamente para el usuario ID {usuario_id}")
                         
                     except Exception as db_err:
@@ -552,17 +627,17 @@ async def process_voice_input(
                         logger.error(f"Error en insercion HU-19: {str(db_err)}")
                         texto_asistente = f"Lo siento {nombre_usuario}, tuvimos un problema interno al guardar tu reserva."                
                 
-                #  HU-19: Si la intención era solo una consulta, solo responder con la disponibilidad encontrada
+                # HU-19: Si la intención era solo una consulta, solo responder con la disponibilidad encontrada
                 else:
                     if len(canchas_nombres) == 1:
-                        texto_asistente = f"{saludo_inicial} Tengo libre la cancha {canchas_nombres[0]} para esa fecha a las {hora_str}. ¿Procedemos con la reserva?"
+                        texto_asistente = f"{saludo_inicial} Tengo libre la cancha {canchas_nombres[0]} para esa fecha {texto_hora_asistente}. ¿Procedemos con la reserva?"
                     else:
                         opciones_str = " y la ".join(canchas_nombres)
-                        texto_asistente = f"{saludo_inicial} Para esa fecha a las {hora_str} tengo disponibles la {opciones_str}. ¿Cual prefieres?"
+                        texto_asistente = f"{saludo_inicial} Para esa fecha {texto_hora_asistente} tengo disponibles la {opciones_str}. ¿Cual prefieres?"
         else:
             texto_asistente = f"Entendido {nombre_usuario}. ¿En que mas te puedo colaborar?"      
 
-        # Síntesis de testo a voz (TTS)
+        # Síntesis de texto a voz (TTS)
         inicio_tts = time.time()
         tts = gTTS(text=texto_asistente, lang='es', tld='com', slow=False)
         audio_buffer = BytesIO()
@@ -572,9 +647,9 @@ async def process_voice_input(
         fin_tts = time.time()
         latencia_tts = int((fin_tts - inicio_tts) * 1000)
 
-        # Limpiar acentos y caracteres especiales de los textos para los headers HTTP si coordino con front puedo mejorar esto usando urllib.parse.quote
-        texto_real_limpio = remover_acentos(texto_real)
-        texto_asistente_limpio = remover_acentos(texto_asistente)
+        # Codificación URL de los headers para soportar tildes y eñes sin romper el protocolo HTTP
+        texto_real_limpio = codificar_header_seguro(texto_real)
+        texto_asistente_limpio = codificar_header_seguro(texto_asistente)
 
         fin_procesamiento = time.time()
         latencia_total = int((fin_procesamiento - inicio_procesamiento) * 1000)
@@ -582,16 +657,13 @@ async def process_voice_input(
 
         # HU-20 (Persistencia de Logs en Supabase)
         try:
-            # Intentamos asociar el log a un usuario real si existe en la base de datos
             query_log_user = text("SELECT id FROM usuarios WHERE nombre ILIKE :nombre LIMIT 1")
             log_user_res = db.execute(query_log_user, {"nombre": nombre_usuario}).fetchone()
             log_usuario_id = log_user_res.id if log_user_res else None
             
-            # Cálculo de costo estimado y tokens totales
             tokens_totales = tokens_input + tokens_output
             costo_estimado = float(tokens_totales * 0.000000075)
             
-            # Insertamos la telemetría exacta requerida por la HU-20 en tu tabla 'logs_conversaciones'
             query_insert_log = text("""
                 INSERT INTO logs_conversaciones (
                     usuario_id, session_id, texto_usuario, texto_respuesta, 
@@ -609,8 +681,8 @@ async def process_voice_input(
             db.execute(query_insert_log,{
                 "usuario_id": log_usuario_id,
                 "session_id": "session_voice_api",
-                "texto_usuario": texto_real,
-                "texto_respuesta": texto_asistente,
+                "texto_usuario": texto_real,  # Se guarda el texto original con tildes en la DB
+                "texto_respuesta": texto_asistente,  # Se guarda el texto original con tildes en la DB
                 "latencia_llm": latencia_llm,
                 "latencia_tts": latencia_tts,
                 "latencia_total": latencia_total,
@@ -619,12 +691,12 @@ async def process_voice_input(
                 "costo_estimado": costo_estimado
             })
             db.commit()
-            logger.info("HU-20: Telemetría e historial de conversación guardados con éxito en Supabase.")
+            logger.info("HU-20: Telemetría guardada en Supabase.")
         except Exception as log_err:
             db.rollback()
-            # No frenamos la respuesta del usuario si el log falla, solo lo registramos en consola
             logger.error(f"Error guardando telemetría HU-20: {str(log_err)}")
 
+        # Armado de respuesta HTTP limpia con headers codificados de manera segura
         headers = {
             "X-Transcription": texto_real_limpio,
             "X-Intent": str(intencion_extraida.get("intencion", "desconocido")),
