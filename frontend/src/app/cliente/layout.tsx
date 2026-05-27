@@ -13,23 +13,37 @@ export default function ClienteLayout({
 }) {
   const router = useRouter();
   const [initial, setInitial] = useState("C");
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
 
   useEffect(() => {
     const fetchUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/login");
+        return;
+      }
       if (session?.user?.user_metadata?.full_name) {
         setInitial(session.user.user_metadata.full_name.charAt(0).toUpperCase());
       } else if (session?.user?.email) {
         setInitial(session.user.email.charAt(0).toUpperCase());
       }
+      setIsLoadingAuth(false);
     };
     fetchUser();
-  }, []);
+  }, [router]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push("/login");
   };
+
+  if (isLoadingAuth) {
+    return (
+      <div className="min-h-screen bg-footcall-light flex items-center justify-center">
+        <div className="animate-spin h-12 w-12 border-4 border-footcall-green border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-footcall-light flex flex-col">
