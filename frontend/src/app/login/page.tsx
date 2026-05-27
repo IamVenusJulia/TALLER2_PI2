@@ -13,6 +13,9 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
+  const [nombre, setNombre] = useState('');
+  const [apellido, setApellido] = useState('');
+  const [telefono, setTelefono] = useState('');
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,7 +57,9 @@ export default function LoginPage() {
         password,
         options: {
           data: {
-            full_name: email.split('@')[0],
+            full_name: nombre,
+            apellido,
+            telefono,
             rol: 'cliente'
           }
         }
@@ -69,6 +74,9 @@ export default function LoginPage() {
         setIsSignUp(false);
         setEmail('');
         setPassword('');
+        setNombre('');
+        setApellido('');
+        setTelefono('');
       }
     } catch (error: any) {
       setErrorMsg(error.message || 'Error al registrarse');
@@ -140,6 +148,49 @@ export default function LoginPage() {
               <div className="p-3 text-sm text-green-600 bg-green-50 border border-green-200 rounded-lg text-center font-medium">
                 {successMsg}
               </div>
+            )}
+            
+             {isSignUp && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5" htmlFor="nombre">Nombre</label>
+                    <input 
+                      id="nombre" 
+                      type="text" 
+                      value={nombre}
+                      onChange={(e) => setNombre(e.target.value)}
+                      placeholder="Juan" 
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-footcall-green focus:border-transparent transition-all bg-white text-gray-900"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5" htmlFor="apellido">Apellido</label>
+                    <input 
+                      id="apellido" 
+                      type="text" 
+                      value={apellido}
+                      onChange={(e) => setApellido(e.target.value)}
+                      placeholder="Pérez" 
+                      className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-footcall-green focus:border-transparent transition-all bg-white text-gray-900"
+                      required
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-foreground mb-1.5" htmlFor="telefono">Teléfono de contacto</label>
+                  <input 
+                    id="telefono" 
+                    type="tel" 
+                    value={telefono}
+                    onChange={(e) => setTelefono(e.target.value)}
+                    placeholder="3001234567" 
+                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-footcall-green focus:border-transparent transition-all bg-white text-gray-900"
+                    required
+                  />
+                </div>
+              </>
             )}
             
             <div>
