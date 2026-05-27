@@ -2,8 +2,9 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense } from "react";
+import { supabase } from "@/lib/supabase";
 
 function SidebarNavigation() {
   const searchParams = useSearchParams();
@@ -46,6 +47,13 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
+
   return (
     <div className="min-h-screen bg-footcall-light flex flex-col md:flex-row">
       {/* Sidebar */}
@@ -58,10 +66,10 @@ export default function AdminLayout({
             <SidebarNavigation />
           </Suspense>
           <div className="p-4 border-t border-gray-100">
-            <Link href="/login" className="flex items-center px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+            <button onClick={handleLogout} className="w-full flex items-center px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors text-left">
               <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
               Cerrar Sesión
-            </Link>
+            </button>
           </div>
         </div>
       </aside>
