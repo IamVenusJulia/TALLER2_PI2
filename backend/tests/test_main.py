@@ -116,7 +116,10 @@ def test_rbac_admin_access_success():
     response = client.get("/api/admin/reservas-semana", headers=headers)
     
     assert response.status_code == 200
-    assert "Panel de administración - Reservas de la semana" in response.json()["message"]
+    json_data = response.json()
+    assert "admin" in json_data
+    assert "canchas_disponibles" in json_data
+    assert "reservas_activas" in json_data
 
 
 

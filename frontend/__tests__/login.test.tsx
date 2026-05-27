@@ -147,10 +147,16 @@ describe('LoginPage Component', () => {
     // Verificar que cambie el título
     expect(screen.getByText('Crea tu cuenta')).toBeInTheDocument()
     
+    const nombreInput = screen.getByLabelText('Nombre')
+    const apellidoInput = screen.getByLabelText('Apellido')
+    const telefonoInput = screen.getByLabelText('Teléfono de contacto')
     const emailInput = screen.getByLabelText('Correo electrónico')
     const passwordInput = screen.getByLabelText('Contraseña')
     const submitButton = screen.getByRole('button', { name: 'Registrarse' })
     
+    fireEvent.change(nombreInput, { target: { value: 'Juan' } })
+    fireEvent.change(apellidoInput, { target: { value: 'Pérez' } })
+    fireEvent.change(telefonoInput, { target: { value: '3001234567' } })
     fireEvent.change(emailInput, { target: { value: 'nuevo@example.com' } })
     fireEvent.change(passwordInput, { target: { value: 'nuevoPass123' } })
     fireEvent.click(submitButton)
@@ -161,7 +167,9 @@ describe('LoginPage Component', () => {
         password: 'nuevoPass123',
         options: {
           data: {
-            full_name: 'nuevo',
+            full_name: 'Juan',
+            apellido: 'Pérez',
+            telefono: '3001234567',
             rol: 'cliente',
           },
         },

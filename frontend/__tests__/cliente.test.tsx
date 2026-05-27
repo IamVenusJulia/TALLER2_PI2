@@ -72,7 +72,20 @@ describe('ClienteDashboard Component', () => {
         id: 'usr_999',
         nombre: 'Daniel Arias',
         rol: 'cliente'
-      }
+      },
+      reservas: [
+        {
+          reserva_id: 101,
+          fecha: "2026-05-20",
+          hora_inicio: "18:00",
+          hora_fin: "19:00",
+          cancha: "Cancha 1 Principal",
+          superficie: "sintetica",
+          estado: "confirmada",
+          total_pago: 120000,
+          metodo_pago: "online"
+        }
+      ]
     }
 
     global.fetch = jest.fn().mockResolvedValue({

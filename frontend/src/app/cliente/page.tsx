@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { mockHistorialCliente } from "@/lib/mocks";
 
 export default function ClienteDashboard() {
   const router = useRouter();
@@ -12,9 +11,10 @@ export default function ClienteDashboard() {
   const [assistantResponse, setAssistantResponse] = useState("");
   const [historial, setHistorial] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [userName, setUserName] = useState("Daniel");
+  const [userName, setUserName] = useState("");
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [textInput, setTextInput] = useState("");
+  const [reservaACancelar, setReservaACancelar] = useState<number | null>(null);
 
   const recognitionRef = useRef<any>(null);
 
@@ -22,9 +22,17 @@ export default function ClienteDashboard() {
     const checkAuthAndFetch = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        router.push("/login");
+        window.location.replace("/login");
         return;
       }
+      
+      // Prevent flash of empty name or wrong cached name by loading from session metadata first
+      if (session.user?.user_metadata?.full_name) {
+        setUserName(session.user.user_metadata.full_name);
+      } else if (session.user?.email) {
+        setUserName(session.user.email.split("@")[0]);
+      }
+      
       setSessionToken(session.access_token);
       await fetchHistorial(session.access_token);
     };
@@ -49,15 +57,14 @@ export default function ClienteDashboard() {
         if (data.usuario_autenticado) {
           setUserName(data.usuario_autenticado.nombre || "Cliente");
         }
-        // Cargamos el historial (si el backend no retorna lista, usamos los datos del mockup inicial)
-        setHistorial(mockHistorialCliente.historial);
+        // Cargamos el historial de reservas reales
+        setHistorial(data.reservas || []);
       } else {
         console.warn("Error al obtener historial del cliente", res.status);
       }
     } catch (err) {
       console.warn("Error cargando historial:", err);
-      // Fallback a mock en caso de desconexión
-      setHistorial(mockHistorialCliente.historial);
+      setHistorial([]);
     } finally {
       setLoadingHistory(false);
     }
@@ -93,10 +100,24 @@ export default function ClienteDashboard() {
         throw new Error(`Error en el servidor: ${response.statusText}`);
       }
 
-      // 1. Obtener los textos devueltos en las cabeceras HTTP expuestas por el backend
-      const transReal = response.headers.get("X-Transcription") || texto;
-      const asistText = response.headers.get("X-Assistant-Text") || "Procesado correctamente.";
+      // 1. Obtener los textos devueltos en las cabeceras HTTP expuestas por el backend decodificándolos de manera segura
+      const transRealRaw = response.headers.get("X-Transcription") || texto;
+      const asistTextRaw = response.headers.get("X-Assistant-Text") || "Procesado correctamente.";
       const intent = response.headers.get("X-Intent");
+
+      // Decodificación segura de caracteres especiales (tildes, eñes, etc.)
+      let transReal = transRealRaw;
+      let asistText = asistTextRaw;
+      try {
+        transReal = decodeURIComponent(transRealRaw);
+      } catch (e) {
+        console.warn("No se pudo decodificar X-Transcription:", e);
+      }
+      try {
+        asistText = decodeURIComponent(asistTextRaw);
+      } catch (e) {
+        console.warn("No se pudo decodificar X-Assistant-Text:", e);
+      }
 
       setTranscription(transReal);
       setAssistantResponse(asistText);
@@ -107,25 +128,50 @@ export default function ClienteDashboard() {
       const audio = new Audio(audioUrl);
       await audio.play();
 
-      // 3. Si la intención fue crear una reserva, agregamos dinámicamente un registro pendiente a la UI
-      if (intent === "crear_reserva") {
-        const nuevaReserva = {
-          reserva_id: Date.now(),
-          fecha: new Date().toISOString().split('T')[0],
-          hora_inicio: "18:00", // Hora tentativa
-          hora_fin: "19:00",
-          cancha: "Cancha 1 Principal",
-          superficie: "sintetica" as any,
-          estado: "pendiente" as any,
-          total_pago: 120000,
-          metodo_pago: "efectivo" as any
-        };
-        setHistorial(prev => [nuevaReserva, ...prev]);
+      // 3. Si la intención fue crear una reserva, recargamos el historial real de la base de datos
+      if (intent === "crear_reserva" && sessionToken) {
+        fetchHistorial(sessionToken);
       }
 
     } catch (error: any) {
       console.error("Error al procesar con el backend:", error);
       setAssistantResponse("Lo siento, no pude conectarme con el asistente. Inténtalo de nuevo.");
+    }
+  };
+
+  const handleCancelarReserva = async () => {
+    if (reservaACancelar === null) return;
+    
+    try {
+      const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://taller2-pi2-2.onrender.com';
+      
+      const headersInit: HeadersInit = {
+        'Content-Type': 'application/json'
+      };
+      if (sessionToken) {
+        headersInit['Authorization'] = `Bearer ${sessionToken}`;
+      }
+
+      const res = await fetch(`${apiBaseUrl}/api/cliente/reservas/${reservaACancelar}/cancelar`, {
+        method: 'PATCH',
+        headers: headersInit
+      });
+
+      if (res.ok) {
+        // Actualizamos localmente el estado de la reserva a cancelada en lugar de borrarla
+        setHistorial(prev => 
+          prev.map(r => r.reserva_id === reservaACancelar ? { ...r, estado: 'cancelada' } : r)
+        );
+        alert("Tu reserva ha sido cancelada con éxito.");
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Error al cancelar: ${errData.detail || 'Problema en el servidor'}`);
+      }
+    } catch (err) {
+      console.error("Error cancelando reserva:", err);
+      alert("Error al intentar cancelar la reserva. Por favor intenta de nuevo.");
+    } finally {
+      setReservaACancelar(null);
     }
   };
 
@@ -180,7 +226,7 @@ export default function ClienteDashboard() {
       
       {/* Header Cliente */}
       <header>
-        <h1 className="text-3xl font-extrabold text-footcall-dark tracking-tight">Hola, {userName} 👋</h1>
+        <h1 className="text-3xl font-extrabold text-footcall-dark tracking-tight">Hola, {userName || "..."} 👋</h1>
         <p className="text-gray-500 mt-1 font-medium">¿Listo para organizar tu próximo partido?</p>
       </header>
 
@@ -304,7 +350,8 @@ export default function ClienteDashboard() {
                   <th className="px-6 py-4">Hora</th>
                   <th className="px-6 py-4">Cancha</th>
                   <th className="px-6 py-4">Pago</th>
-                  <th className="px-6 py-4 text-right">Estado</th>
+                  <th className="px-6 py-4">Estado</th>
+                  <th className="px-6 py-4 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -326,10 +373,21 @@ export default function ClienteDashboard() {
                         <p className="text-footcall-green font-bold">${reserva.total_pago.toLocaleString()}</p>
                         <p className="text-xs text-gray-500 capitalize">{reserva.metodo_pago}</p>
                       </td>
-                      <td className="px-6 py-5 text-right">
+                      <td className="px-6 py-5">
                         <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider ${statusColor}`}>
                           {reserva.estado}
                         </span>
+                      </td>
+                      <td className="px-6 py-5 text-right">
+                        {(reserva.estado === "pendiente" || reserva.estado === "confirmada") && (
+                          <button
+                            onClick={() => setReservaACancelar(reserva.reserva_id)}
+                            className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 font-bold text-xs rounded-lg transition-colors shadow-sm"
+                            title="Cancelar reserva"
+                          >
+                            Cancelar
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -339,6 +397,41 @@ export default function ClienteDashboard() {
           </div>
         )}
       </section>
+
+      {/* Modal de Confirmación de Cancelación */}
+      {reservaACancelar !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mb-4 mx-auto">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-bold text-center text-gray-900 mb-2">
+                ¿Cancelar reserva?
+              </h3>
+              <p className="text-center text-gray-500 mb-6">
+                Estás a punto de cancelar esta reserva. Esta acción no se puede deshacer y el estado pasará a "cancelada". ¿Deseas continuar?
+              </p>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setReservaACancelar(null)}
+                  className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold rounded-xl transition-colors"
+                >
+                  Volver
+                </button>
+                <button
+                  onClick={handleCancelarReserva}
+                  className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors shadow-sm"
+                >
+                  Sí, Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

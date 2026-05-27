@@ -11,6 +11,11 @@ jest.mock('next/navigation', () => ({
       prefetch: () => null,
     }
   },
+  useSearchParams() {
+    return {
+      get: (key: string) => null,
+    }
+  }
 }))
 
 // Mock Supabase
@@ -44,12 +49,27 @@ describe('AdminDashboard Component', () => {
 
     // 2. Mock de API de reservas-semana
     const mockAdminData = {
-      message: 'Panel de administración - Reservas de la semana',
-      admin_info: {
-        id: 'usr_000',
-        nombre: 'Admin FootCall',
-        rol: 'admin'
-      }
+      admin: {
+        nombre: 'Admin FootCall'
+      },
+      canchas_disponibles: [
+        {
+          cancha_id: 1,
+          nombre: "Cancha 1 Principal",
+          tipo_superficie: "sintetica",
+          precio_por_hora: 120000
+        }
+      ],
+      reservas_activas: [
+        {
+          reserva_id: 505,
+          cliente_nombre: "Juan Pérez",
+          cancha_id: 1,
+          fecha: "2026-05-18",
+          hora_inicio: "20:00",
+          estado: "pendiente"
+        }
+      ]
     }
 
     global.fetch = jest.fn().mockImplementation((url) => {
@@ -87,12 +107,27 @@ describe('AdminDashboard Component', () => {
     })
 
     const mockAdminData = {
-      message: 'Panel de administración - Reservas de la semana',
-      admin_info: {
-        id: 'usr_000',
-        nombre: 'Admin FootCall',
-        rol: 'admin'
-      }
+      admin: {
+        nombre: 'Admin FootCall'
+      },
+      canchas_disponibles: [
+        {
+          cancha_id: 1,
+          nombre: "Cancha 1 Principal",
+          tipo_superficie: "sintetica",
+          precio_por_hora: 120000
+        }
+      ],
+      reservas_activas: [
+        {
+          reserva_id: 505,
+          cliente_nombre: "Juan Pérez",
+          cancha_id: 1,
+          fecha: "2026-05-18",
+          hora_inicio: "20:00",
+          estado: "pendiente"
+        }
+      ]
     }
 
     global.fetch = jest.fn().mockImplementation((url, options) => {
