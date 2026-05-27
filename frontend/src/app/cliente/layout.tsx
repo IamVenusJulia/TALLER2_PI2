@@ -1,11 +1,36 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 
 export default function ClienteLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+  const [initial, setInitial] = useState("C");
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.user_metadata?.full_name) {
+        setInitial(session.user.user_metadata.full_name.charAt(0).toUpperCase());
+      } else if (session?.user?.email) {
+        setInitial(session.user.email.charAt(0).toUpperCase());
+      }
+    };
+    fetchUser();
+  }, []);
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
+
   return (
     <div className="min-h-screen bg-footcall-light flex flex-col">
       {/* Navbar Superior */}
@@ -18,12 +43,12 @@ export default function ClienteLayout({
             <div className="flex items-center space-x-4">
               <span className="text-sm font-semibold text-gray-600 hidden sm:block">Mi Cuenta</span>
               <div className="h-10 w-10 rounded-full bg-footcall-green flex items-center justify-center text-white font-bold shadow-sm">
-                D
+                {initial}
               </div>
               <div className="border-l border-gray-200 h-6 mx-2 hidden sm:block"></div>
-              <Link href="/login" className="text-sm font-bold text-red-500 hover:text-red-600 transition-colors">
+              <button onClick={handleLogout} className="text-sm font-bold text-red-500 hover:text-red-600 transition-colors">
                 Salir
-              </Link>
+              </button>
             </div>
           </div>
         </div>
