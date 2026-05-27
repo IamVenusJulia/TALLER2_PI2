@@ -44,7 +44,7 @@ function AdminDashboard() {
     const checkAuthAndFetch = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        router.push("/login");
+        window.location.replace("/login");
         return;
       }
       
@@ -53,7 +53,7 @@ function AdminDashboard() {
       const userRole = session.user?.user_metadata?.rol || (userEmail.toLowerCase().includes("admin") ? "admin" : "cliente");
       
       if (userRole !== "admin") {
-        router.push("/cliente");
+        window.location.replace("/cliente");
         return;
       }
 

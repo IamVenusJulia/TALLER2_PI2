@@ -54,18 +54,27 @@ export default function AdminLayout({
     const fetchUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        router.replace("/login");
+        window.location.replace("/login");
         return;
       }
       setIsLoadingAuth(false);
     };
     fetchUser();
-  }, [router]);
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    };
+    window.addEventListener("pageshow", handlePageShow);
+    return () => {
+      window.removeEventListener("pageshow", handlePageShow);
+    };
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.refresh();
-    router.replace("/login");
+    window.location.replace("/login");
   };
 
   if (isLoadingAuth) {
