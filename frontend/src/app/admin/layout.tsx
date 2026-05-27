@@ -54,7 +54,7 @@ export default function AdminLayout({
     const fetchUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        router.push("/login");
+        router.replace("/login");
         return;
       }
       setIsLoadingAuth(false);
@@ -64,7 +64,8 @@ export default function AdminLayout({
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.push("/login");
+    router.refresh();
+    router.replace("/login");
   };
 
   if (isLoadingAuth) {

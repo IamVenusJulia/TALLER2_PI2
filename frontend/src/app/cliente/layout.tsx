@@ -19,7 +19,7 @@ export default function ClienteLayout({
     const fetchUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        router.push("/login");
+        router.replace("/login");
         return;
       }
       if (session?.user?.user_metadata?.full_name) {
@@ -34,7 +34,8 @@ export default function ClienteLayout({
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.push("/login");
+    router.refresh();
+    router.replace("/login");
   };
 
   if (isLoadingAuth) {
