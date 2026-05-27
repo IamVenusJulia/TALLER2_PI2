@@ -11,9 +11,10 @@ export default function ClienteDashboard() {
   const [assistantResponse, setAssistantResponse] = useState("");
   const [historial, setHistorial] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
-  const [userName, setUserName] = useState("Daniel");
+  const [userName, setUserName] = useState("");
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [textInput, setTextInput] = useState("");
+  const [reservaACancelar, setReservaACancelar] = useState<number | null>(null);
 
   const recognitionRef = useRef<any>(null);
 
@@ -130,10 +131,8 @@ export default function ClienteDashboard() {
     }
   };
 
-  const handleCancelarReserva = async (reservaId: number) => {
-    if (!window.confirm("¿Estás seguro de que deseas cancelar esta reserva?")) {
-      return;
-    }
+  const handleCancelarReserva = async () => {
+    if (reservaACancelar === null) return;
     
     try {
       const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'https://taller2-pi2-2.onrender.com';
@@ -145,7 +144,7 @@ export default function ClienteDashboard() {
         headersInit['Authorization'] = `Bearer ${sessionToken}`;
       }
 
-      const res = await fetch(`${apiBaseUrl}/api/cliente/reservas/${reservaId}/cancelar`, {
+      const res = await fetch(`${apiBaseUrl}/api/cliente/reservas/${reservaACancelar}/cancelar`, {
         method: 'PATCH',
         headers: headersInit
       });
@@ -153,7 +152,7 @@ export default function ClienteDashboard() {
       if (res.ok) {
         // Actualizamos localmente el estado de la reserva a cancelada en lugar de borrarla
         setHistorial(prev => 
-          prev.map(r => r.reserva_id === reservaId ? { ...r, estado: 'cancelada' } : r)
+          prev.map(r => r.reserva_id === reservaACancelar ? { ...r, estado: 'cancelada' } : r)
         );
         alert("Tu reserva ha sido cancelada con éxito.");
       } else {
@@ -163,6 +162,8 @@ export default function ClienteDashboard() {
     } catch (err) {
       console.error("Error cancelando reserva:", err);
       alert("Error al intentar cancelar la reserva. Por favor intenta de nuevo.");
+    } finally {
+      setReservaACancelar(null);
     }
   };
 
@@ -217,7 +218,7 @@ export default function ClienteDashboard() {
       
       {/* Header Cliente */}
       <header>
-        <h1 className="text-3xl font-extrabold text-footcall-dark tracking-tight">Hola, {userName} 👋</h1>
+        <h1 className="text-3xl font-extrabold text-footcall-dark tracking-tight">Hola, {userName || "..."} 👋</h1>
         <p className="text-gray-500 mt-1 font-medium">¿Listo para organizar tu próximo partido?</p>
       </header>
 
@@ -372,7 +373,7 @@ export default function ClienteDashboard() {
                       <td className="px-6 py-5 text-right">
                         {(reserva.estado === "pendiente" || reserva.estado === "confirmada") && (
                           <button
-                            onClick={() => handleCancelarReserva(reserva.reserva_id)}
+                            onClick={() => setReservaACancelar(reserva.reserva_id)}
                             className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 hover:text-red-700 font-bold text-xs rounded-lg transition-colors shadow-sm"
                             title="Cancelar reserva"
                           >
@@ -388,6 +389,41 @@ export default function ClienteDashboard() {
           </div>
         )}
       </section>
+
+      {/* Modal de Confirmación de Cancelación */}
+      {reservaACancelar !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mb-4 mx-auto">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-xl font-bold text-center text-gray-900 mb-2">
+                ¿Cancelar reserva?
+              </h3>
+              <p className="text-center text-gray-500 mb-6">
+                Estás a punto de cancelar esta reserva. Esta acción no se puede deshacer y el estado pasará a "cancelada". ¿Deseas continuar?
+              </p>
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setReservaACancelar(null)}
+                  className="flex-1 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold rounded-xl transition-colors"
+                >
+                  Volver
+                </button>
+                <button
+                  onClick={handleCancelarReserva}
+                  className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors shadow-sm"
+                >
+                  Sí, Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
