@@ -27,7 +27,7 @@ function AdminDashboard() {
   const [reservas, setReservas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingAction, setLoadingAction] = useState(false);
-  const [adminName, setAdminName] = useState("Administrador");
+  const [adminName, setAdminName] = useState("");
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [clientes, setClientes] = useState<any[]>([]);
   const [loadingClientes, setLoadingClientes] = useState(false);
@@ -55,6 +55,15 @@ function AdminDashboard() {
       if (userRole !== "admin") {
         window.location.replace("/cliente");
         return;
+      }
+
+      // Prevent flash of default name by loading from session metadata first
+      if (session.user?.user_metadata?.full_name) {
+        setAdminName(session.user.user_metadata.full_name);
+      } else if (session.user?.email) {
+        setAdminName(session.user.email.split("@")[0]);
+      } else {
+        setAdminName("Administrador");
       }
 
       setSessionToken(session.access_token);

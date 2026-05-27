@@ -25,6 +25,14 @@ export default function ClienteDashboard() {
         window.location.replace("/login");
         return;
       }
+      
+      // Prevent flash of empty name or wrong cached name by loading from session metadata first
+      if (session.user?.user_metadata?.full_name) {
+        setUserName(session.user.user_metadata.full_name);
+      } else if (session.user?.email) {
+        setUserName(session.user.email.split("@")[0]);
+      }
+      
       setSessionToken(session.access_token);
       await fetchHistorial(session.access_token);
     };
