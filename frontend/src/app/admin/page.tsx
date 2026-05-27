@@ -264,24 +264,44 @@ function AdminDashboard() {
                   <p className="text-base font-bold text-gray-900">{reservaSeleccionada.hora_inicio}</p>
                 </div>
               </div>
-              <div className="p-4 bg-yellow-50 border border-yellow-100 rounded-2xl flex items-center space-x-3">
-                <span className="inline-flex h-3 w-3 rounded-full bg-yellow-500 animate-pulse"></span>
-                <span className="text-sm font-bold text-yellow-800 uppercase">Estado: {reservaSeleccionada.estado}</span>
-              </div>
+              {(() => {
+                let statusBg = "bg-yellow-50 border-yellow-100";
+                let bulletColor = "bg-yellow-500";
+                let textColor = "text-yellow-800";
+                if (reservaSeleccionada.estado === "confirmada") {
+                  statusBg = "bg-green-50 border-green-100";
+                  bulletColor = "bg-green-500";
+                  textColor = "text-green-800";
+                } else if (reservaSeleccionada.estado === "cancelada") {
+                  statusBg = "bg-red-50 border-red-100";
+                  bulletColor = "bg-red-500";
+                  textColor = "text-red-800";
+                }
+                return (
+                  <div className={`p-4 rounded-2xl flex items-center space-x-3 border ${statusBg}`}>
+                    <span className={`inline-flex h-3 w-3 rounded-full ${bulletColor} ${reservaSeleccionada.estado === 'pendiente' ? 'animate-pulse' : ''}`}></span>
+                    <span className={`text-sm font-bold uppercase ${textColor}`}>Estado: {reservaSeleccionada.estado}</span>
+                  </div>
+                );
+              })()}
             </div>
             <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row sm:justify-end gap-3">
-              <button 
-                onClick={() => actualizarEstado(reservaSeleccionada.reserva_id, 'confirmada')}
-                className="w-full sm:w-auto px-5 py-2.5 bg-green-50 hover:bg-green-600 text-white font-bold text-sm rounded-xl transition-all shadow-sm"
-              >
-                Confirmar Reserva
-              </button>
-              <button 
-                onClick={() => actualizarEstado(reservaSeleccionada.reserva_id, 'cancelada')}
-                className="w-full sm:w-auto px-5 py-2.5 bg-red-50 hover:bg-red-600 text-white font-bold text-sm rounded-xl transition-all shadow-sm"
-              >
-                Cancelar Reserva
-              </button>
+              {reservaSeleccionada.estado !== 'cancelada' && reservaSeleccionada.estado !== 'confirmada' && (
+                <button 
+                  onClick={() => actualizarEstado(reservaSeleccionada.reserva_id, 'confirmada')}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-bold text-sm rounded-xl transition-all shadow-sm"
+                >
+                  Confirmar Reserva
+                </button>
+              )}
+              {reservaSeleccionada.estado !== 'cancelada' && (
+                <button 
+                  onClick={() => actualizarEstado(reservaSeleccionada.reserva_id, 'cancelada')}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-sm rounded-xl transition-all shadow-sm"
+                >
+                  Cancelar Reserva
+                </button>
+              )}
               <button 
                 onClick={() => setReservaSeleccionada(null)}
                 className="w-full sm:w-auto px-5 py-2.5 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 font-bold text-sm rounded-xl transition-all"
